@@ -4608,9 +4608,25 @@ function buildPdfPage_L2(g, o, imgPost, imgPre, pageNum) {
   }
 }
 function buildGraphPdfPageHTML(g, o, imgPost, imgPre, pageNum) {
-  return (g.pdfLayout || 1) === 2
+  const page = (g.pdfLayout || 1) === 2
     ? buildPdfPage_L2(g, o, imgPost, imgPre, pageNum)
     : buildPdfPage_L1(g, o, imgPost, imgPre, pageNum);
+  // The report uses fixed positions. Compact export-only type prevents long
+  // labels from colliding when the browser applies its print text metrics.
+  const exportStyles = `<style>
+    .cross-section-pdf-page { font-size:12px !important; line-height:1.2 !important; }
+    .cross-section-pdf-page [style*="font-size:20px"] { font-size:14px !important; }
+    .cross-section-pdf-page [style*="font-size:18px"] { font-size:13px !important; }
+    .cross-section-pdf-page [style*="font-size:17px"] { font-size:12px !important; }
+    .cross-section-pdf-page [style*="font-size:16px"] { font-size:12px !important; }
+    .cross-section-pdf-page [style*="font-size:15px"] { font-size:11px !important; }
+    .cross-section-pdf-page [style*="font-size:14px"] { font-size:10px !important; }
+    .cross-section-pdf-page [style*="font-size:13px"] { font-size:10px !important; }
+    .cross-section-pdf-page [style*="font-size:12px"] { font-size:9px !important; }
+    .cross-section-pdf-page [style*="font-size:11px"] { font-size:9px !important; }
+    .cross-section-pdf-page [style*="font-size:10px"] { font-size:8px !important; }
+  </style>`;
+  return exportStyles + page.replace('id="pdf-container"', 'id="pdf-container" class="cross-section-pdf-page"');
 }
 function _buildChartImages(g, o) {
   const isLayout2 = (g.pdfLayout || 1) === 2;
@@ -4652,6 +4668,193 @@ function _buildChartImages(g, o) {
   }
   return { imgPost, imgPre };
 }
+
+const CROSS_SECTION_CANVAS_W = 1040;
+const CROSS_SECTION_CANVAS_H = 710;
+const CROSS_SECTION_CANVAS_SCALE = 2;
+
+function loadCrossSectionImage(src) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = reject;
+    image.src = src;
+  });
+}
+
+function drawCrossSectionText(ctx, text, x, y, size = 12, weight = 'normal', align = 'left') {
+  ctx.font = `${weight} ${size}px "Times New Roman"`;
+  ctx.fillStyle = '#111';
+  ctx.textAlign = align;
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText(String(text), x, y);
+}
+
+function drawCrossSectionLines(ctx, lines, x, y, size = 11, gap = 14, weight = 'normal', align = 'left') {
+  lines.forEach((line, index) => drawCrossSectionText(ctx, line, x, y + (index * gap), size, weight, align));
+}
+
+function drawCrossSectionLegend(ctx, x, y, rows) {
+  rows.forEach(([color, label], index) => {
+    const top = y + (index * 22);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x + 32, top); ctx.stroke();
+    drawCrossSectionText(ctx, label, x + 42, top + 4, 11);
+  });
+}
+
+function drawCrossSectionTable(ctx, x, y, headers, rows, columnWidth = 68) {
+  const rowHeight = 22;
+  ctx.textAlign = 'center';
+  headers.forEach((header, column) => {
+    ctx.fillStyle = '#e4e7f2';
+    ctx.fillRect(x + (column * columnWidth), y, columnWidth - 2, rowHeight - 2);
+    drawCrossSectionText(ctx, header, x + (column * columnWidth) + ((columnWidth - 2) / 2), y + 9, 9, 'normal', 'center');
+  });
+  rows.forEach((row, rowIndex) => {
+    row.forEach((value, column) => {
+      const top = y + ((rowIndex + 1) * rowHeight);
+      ctx.fillStyle = rowIndex === rows.length - 1 ? '#e4e7f2' : '#f1f3fa';
+      ctx.fillRect(x + (column * columnWidth), top, columnWidth - 2, rowHeight - 2);
+      drawCrossSectionText(ctx, value, x + (column * columnWidth) + ((columnWidth - 2) / 2), top + 14, 10, rowIndex === rows.length - 1 ? 'bold' : 'normal', 'center');
+    });
+  });
+  ctx.textAlign = 'left';
+}
+
+async function buildCrossSectionCanvas(g, o, pageNumber) {
+  const canvas = document.createElement('canvas');
+  canvas.width = CROSS_SECTION_CANVAS_W * CROSS_SECTION_CANVAS_SCALE;
+  canvas.height = CROSS_SECTION_CANVAS_H * CROSS_SECTION_CANVAS_SCALE;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(CROSS_SECTION_CANVAS_SCALE, CROSS_SECTION_CANVAS_SCALE);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, CROSS_SECTION_CANVAS_W, CROSS_SECTION_CANVAS_H);
+  const images = _buildChartImages(g, o);
+  const postImage = await loadCrossSectionImage(images.imgPost);
+  const preImage = images.imgPre ? await loadCrossSectionImage(images.imgPre) : null;
+  const isL2 = (g.pdfLayout || 1) === 2;
+
+  if (isL2) {
+    drawCrossSectionText(ctx, `Site: ${g.name || 'Site'}`, 520, 20, 10, 'normal', 'center');
+    const cards = g.hasSubGraph
+      ? [
+          { title: `Site: ${g.name || 'Site'} - Pre Monsoon`, image: preImage, y: 32, height: 320 },
+          { title: `Site: ${g.name || 'Site'} - Post Monsoon`, image: postImage, y: 360, height: 320 }
+        ]
+      : [{ title: `Site: ${g.name || 'Site'} - Post Monsoon`, image: postImage, y: 45, height: 480 }];
+    cards.forEach(card => {
+      ctx.strokeStyle = '#c0c0c0'; ctx.lineWidth = 1;
+      ctx.strokeRect(28, card.y, 984, card.height);
+      drawCrossSectionText(ctx, card.title, 520, card.y + 22, 12, 'bold', 'center');
+      const imageY = card.y + (g.hasSubGraph ? 34 : 48);
+      const imageH = g.hasSubGraph ? 245 : 360;
+      ctx.drawImage(card.image, 60, imageY, 850, imageH);
+      drawCrossSectionText(ctx, 'Distance (m)', 520, card.y + card.height - 10, 9, 'bold', 'center');
+    });
+    drawCrossSectionText(ctx, `Page ${pageNumber}`, 1005, 695, 9, 'normal', 'right');
+    return canvas;
+  }
+
+  ctx.strokeStyle = '#000'; ctx.lineWidth = 1;
+  ctx.strokeRect(20, 20, 1000, 670);
+  drawCrossSectionText(ctx, 'Cross Section Sand Bar', 600, 40, 14, 'normal', 'center');
+  drawCrossSectionText(ctx, g.name || 'Post Monsoon', 600, 57, 13, 'bold', 'center');
+  drawCrossSectionLines(ctx, ['Source- Primary Data generated', 'by DGPS', 'Hi- Target DGPS (Model No.', 'V30plus)'], 32, 70, 10, 13);
+  drawCrossSectionText(ctx, 'Calculation', 32, 126, 14, 'bold');
+  const allowed = o.allowed.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  drawCrossSectionLines(ctx, [
+    `• Total Area: ${g.area} Ha. (Source: Table no. 7.2)`,
+    `• No mining area: ${g.noMine} Ha.`,
+    `   Potential area: ${g.area} - ${g.noMine} = ${o.pArea.toFixed(2)} Ha.`,
+    `• Potential Area (Ha.): ${o.pArea.toFixed(2)}`,
+    `• Average Thickness: ${o.activeCalcThick.toFixed(2)}`,
+    `• Bulk Density: ${g.bulk}`,
+    `${o.pArea.toFixed(2)} × 10000 × ${o.activeCalcThick.toFixed(2)} × ${g.bulk} = ${o.tonnes.toFixed(2)} Tonnes`,
+    `• Total excavation in Tonnes (${g.pct}% as per EMGSM 2020) = ${allowed}`
+  ], 32, 148, 9.5, 18);
+
+  if (g.hasSubGraph) {
+    ctx.drawImage(postImage, 350, 68, 440, 190);
+    drawCrossSectionText(ctx, g.subName || 'Pre Monsoon', 570, 280, 12, 'bold', 'center');
+    ctx.drawImage(preImage, 350, 292, 440, 190);
+    drawCrossSectionText(ctx, 'Distance of the sand bar from river bank towards river (m)', 570, 502, 11, 'normal', 'center');
+    drawCrossSectionText(ctx, 'Post Monsoon', 835, 96, 11);
+    drawCrossSectionText(ctx, `Average Thickness: ${o.avgThickPost.toFixed(2)}`, 835, 111, 10);
+    const rows = Array.from({ length: Math.max(o.thickPost.length, o.thickPre.length) }, (_v, index) => [
+      o.thickPost[index] === undefined ? '-' : o.thickPost[index].toFixed(2),
+      o.thickPre[index] === undefined ? '-' : o.thickPre[index].toFixed(2)
+    ]);
+    rows.push([o.avgThickPost.toFixed(2), o.avgThickPre.toFixed(2)]);
+    drawCrossSectionTable(ctx, 820, 140, ['Post', 'Pre'], rows);
+    drawCrossSectionText(ctx, 'Pre Monsoon', 835, 430, 11);
+    drawCrossSectionText(ctx, `Average Thickness: ${o.avgThickPre.toFixed(2)}`, 835, 445, 10);
+    drawCrossSectionLegend(ctx, 50, 540, [
+      ['#de3b3b', 'Red Line'], ['#da8b4e', 'Post monsoon Elevation'],
+      ['#eec34a', 'Pre monsoon Elevation'], ['#3b8bba', 'Thalweg line']
+    ]);
+  } else {
+    ctx.drawImage(postImage, 350, 90, 470, 240);
+    drawCrossSectionText(ctx, 'Distance of the sand bar from river bank towards river (m)', 585, 350, 11, 'normal', 'center');
+    const rows = o.thickPost.map(value => [value.toFixed(2)]);
+    rows.push([o.avgThickPost.toFixed(2)]);
+    drawCrossSectionTable(ctx, 855, 165, ['Post'], rows, 90);
+    drawCrossSectionText(ctx, 'Post Monsoon', 830, 370, 11);
+    drawCrossSectionText(ctx, `Average Thickness: ${o.avgThickPost.toFixed(2)}`, 800, 385, 10);
+    drawCrossSectionLegend(ctx, 50, 500, [
+      ['#de3b3b', 'Red Line'], ['#da8b4e', 'Post monsoon Elevation'], ['#3b8bba', 'Thalweg line']
+    ]);
+  }
+  drawCrossSectionLines(ctx, ['Note: The levels given in the cross-section as observed in the field has been checked and found', 'nearly matching with the office record.'], 570, 650, 8.5, 11, 'normal', 'center');
+  drawCrossSectionText(ctx, pageNumber, 1000, 680, 13, 'bold', 'right');
+  return canvas;
+}
+
+async function exportCrossSectionPdf(graphs, filename) {
+  await ensurePortalVendors(['jspdf']);
+  if (!window.jspdf?.jsPDF) throw new Error('PDF export tools are still loading.');
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4', compress: true });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  for (let index = 0; index < graphs.length; index += 1) {
+    const g = graphs[index];
+    const canvas = await buildCrossSectionCanvas(g, calcGraph(g), index + 1);
+    if (index > 0) doc.addPage('a4', 'landscape');
+    const width = pageWidth - 10;
+    const height = width * (CROSS_SECTION_CANVAS_H / CROSS_SECTION_CANVAS_W);
+    doc.addImage(canvas.toDataURL('image/png'), 'PNG', 5, (pageHeight - height) / 2, width, height, undefined, 'FAST');
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  doc.save(filename);
+}
+
+async function exportOneCrossSectionPdf(id) {
+  const g = S.graphs.find(item => item.id === id);
+  if (!g) return;
+  try {
+    toast('Preparing PDF, please wait...', 'success');
+    await exportCrossSectionPdf([g], `${(g.hasSubGraph ? g.subName : g.name).replace(/\s+/g, '_')}_Report.pdf`);
+    toast('PDF downloaded successfully!', 'success');
+  } catch (error) {
+    console.error(error); toast('Failed to export PDF.', 'danger');
+  }
+}
+
+async function exportAllCrossSectionPdfs() {
+  if (!S.graphs?.length) return toast('No cross-sections available to compile.', 'danger');
+  try {
+    toast('Preparing cross-section report...', 'success');
+    await exportCrossSectionPdf(S.graphs, 'All_Cross_Sections_Consolidated_Report.pdf');
+    toast('Unified booklet generated successfully!', 'success');
+  } catch (error) {
+    console.error(error); toast('Failed to compile consolidated PDF.', 'danger');
+  }
+}
+
+window.generatePDF = exportOneCrossSectionPdf;
+window.generateAllGraphsPDF = exportAllCrossSectionPdfs;
 function generatePDF(id) {
   const g = S.graphs.find(x => x.id === id);
   if (!g) return;
@@ -4671,8 +4874,8 @@ function generatePDF(id) {
   const opt = {
     margin: 0,
     filename: `${(g.hasSubGraph ? g.subName : g.name).replace(/\s+/g, '_')}_Report.pdf`,
-    image: { type: 'jpeg', quality: 1.0 },
-    html2canvas: { scale: 3, useCORS: true, letterRendering: true, scrollX: 0, scrollY: 0 },
+    image: { type: 'png', quality: 1.0 },
+    html2canvas: { scale: 2, useCORS: true, letterRendering: false, scrollX: 0, scrollY: 0 },
     jsPDF: { unit: 'in', format: 'a4', orientation: 'landscape' }
   };
   html2pdf().set(opt).from(container.querySelector('#pdf-container')).save().then(() => {
@@ -4697,7 +4900,10 @@ function generateAllGraphsPDF() {
     const { imgPost, imgPre } = _buildChartImages(g, o);
     pagesHTML.push(buildGraphPdfPageHTML(g, o, imgPost, imgPre, 159 + idx));
   }
-  const pagesSanitized = pagesHTML.map(html => html.replace('id="pdf-container"', 'class="pdf-page-block"'));
+  const pagesSanitized = pagesHTML.map(html => html.replace(
+    'id="pdf-container" class="cross-section-pdf-page"',
+    'class="pdf-page-block cross-section-pdf-page"'
+  ));
   const templateHTML = `<div id="all-pdf-container" style="background:#fff; width: 1040px;">${pagesSanitized.join('\n<div class="html2pdf__page-break"></div>\n')}</div>`;
   const container = document.createElement('div');
   container.style.position = 'absolute';
@@ -4710,8 +4916,8 @@ function generateAllGraphsPDF() {
   const opt = {
     margin: 0,
     filename: 'All_Cross_Sections_Consolidated_Report.pdf',
-    image: { type: 'jpeg', quality: 1.0 },
-    html2canvas: { scale: 3, useCORS: true, letterRendering: true, scrollX: 0, scrollY: 0 },
+    image: { type: 'png', quality: 1.0 },
+    html2canvas: { scale: 2, useCORS: true, letterRendering: false, scrollX: 0, scrollY: 0 },
     jsPDF: { unit: 'in', format: 'a4', orientation: 'landscape' },
     pagebreak: { mode: ['css', 'legacy'] }
   };
