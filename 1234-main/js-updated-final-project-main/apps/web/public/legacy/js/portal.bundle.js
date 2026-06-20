@@ -3872,8 +3872,8 @@ function renderPlates() {
     <div class="chapter-item">
       <div class="ch-num" style="background:var(--teal)">P${i + 1}</div>
       <div class="ch-body">
-        <input class="ch-name-input" value="${p.name}" oninput="S.plates[${i}].name=this.value" placeholder="Plate Name">
-        <textarea class="ch-summary" rows="2" oninput="S.plates[${i}].summary=this.value" placeholder="Plate Description...">${p.summary}</textarea>
+        <input class="ch-name-input" value="${p.name}" oninput="updatePlateField(${i},'name',this.value)" placeholder="Plate Name">
+        <textarea class="ch-summary" rows="2" oninput="updatePlateField(${i},'summary',this.value)" placeholder="Plate Description...">${p.summary}</textarea>
         <div style="margin-top:8px; display:flex; flex-direction:column; gap:6px;">
           ${fileInfoHTML}
         </div>
@@ -3896,6 +3896,14 @@ function addPlate() {
     pages: null
   });
   renderPlates();
+  if (window.pdfPreview) window.pdfPreview.notifyUpdate('plates');
+  if (window.debouncedSaveState) window.debouncedSaveState();
+}
+function updatePlateField(index, field, value) {
+  const plate = S.plates[index];
+  if (!plate) return;
+  plate[field] = value;
+  if (window.pdfPreview) window.pdfPreview.notifyUpdate('plates');
   if (window.debouncedSaveState) window.debouncedSaveState();
 }
 function deletePlateReq(id) {
@@ -3980,6 +3988,7 @@ function deletePlateFile(id) {
   }
 }
 window.deletePlateFile = deletePlateFile;
+window.updatePlateField = updatePlateField;
 window.handlePlateUpload = handlePlateUpload;
 window.addPlate = addPlate;
 window.deletePlateReq = deletePlateReq;
@@ -12491,13 +12500,24 @@ async function generateFinalPDF(regenerate = false) {
     };
     const addPlates = () => {
       if (!Array.isArray(S.plates) || !S.plates.length) return false;
-      let y = beginSection('All Plate Sections');
       S.plates.forEach((plate, index) => {
-        if (y > 260) y = beginSection('All Plate Sections Continued');
-        y = writeParagraph(`${index + 1}. ${safe(plate.name, 'Plate')}`, y, { bold: true, size: 10, color: blue, after: 3 });
-        y = writeParagraph(plate.summary || '', y, { size: 9, after: 5 });
+        let y = beginSection(`Plate P${index + 1}`);
+        y = writeParagraph(`P${index + 1} · ${safe(plate.name, 'Plate')}`, y, { bold: true, size: 13, color: blue, after: 5 });
+        y = writeParagraph(plate.summary || 'No plate description has been entered.', y, { size: 9.5, after: 6 });
         if (plate.fileName) y = writeParagraph(`Attachment: ${plate.fileName}`, y, { size: 8.5, color: saffron, after: 5 });
-        addUploadedPages(plate.pages, `Plate ${index + 1}`);
+        const source = Array.isArray(plate.pages)
+          ? plate.pages.find(page => /^data:image\//i.test(String(page || '')))
+          : '';
+        if (source) {
+          try {
+            const format = /^data:image\/jpeg/i.test(source) ? 'JPEG' : 'PNG';
+            doc.addImage(source, format, pad, y, W - (pad * 2), H - y - 18, undefined, 'FAST');
+          } catch (err) {
+            console.warn('Could not embed plate attachment:', err);
+          }
+        } else {
+          y = writeParagraph('No PDF or image has been uploaded for this plate.', y + 18, { size: 9, color: muted });
+        }
       });
       addUploadedPages(S.uploadedPDFs?.plates, 'Plate Section');
       return true;
@@ -13054,7 +13074,7 @@ const pdfPreview = {
   SECTION_TITLES: {
     'front-matter': 'Live Preview',
     'chapters': 'Live Preview',
-    'plates': 'PDF Preview',
+    'plates': 'Live Preview',
     'anx1': 'Annexure I Preview',
     'anx2': 'Annexure II Preview',
     'anx3': 'Annexure III Preview',
@@ -13782,16 +13802,28 @@ const pdfPreview = {
   getPlatePages() {
     const pages = [];
     S.plates.forEach((p, i) => {
-      if (p.pages && p.pages.length) {
-        p.pages.forEach((img, idx) => {
+      const sourcePages = Array.isArray(p.pages)
+        ? p.pages.filter(src => this.isPreviewImageSource(src))
+        : [];
+      const title = p.name || `Plate ${i + 1}`;
+      const description = p.summary || 'No plate description has been entered.';
+      if (sourcePages.length) {
+        sourcePages.forEach((src, pageIndex) => {
           pages.push({
-            src: img,
-            label: p.pages.length > 1
-              ? `Plate ${i + 1} - Page ${idx + 1}`
-              : `Plate ${i + 1}: ${p.name}`
+            src,
+            label: sourcePages.length > 1
+              ? `Plate P${i + 1} - Page ${pageIndex + 1}`
+              : `Plate P${i + 1}: ${title}`
           });
         });
+        return;
       }
+      // Match the Chapter preview's generated-page structure exactly.
+      pages.push({
+        src: this.renderTextPageCanvas(title, description, `Plate P${i + 1}`),
+        label: `Plate P${i + 1}`,
+        generated: true
+      });
     });
     return pages;
   },
