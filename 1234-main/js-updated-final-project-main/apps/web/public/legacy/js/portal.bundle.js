@@ -802,7 +802,7 @@ function isActionCellContent(value) {
 }
 function setRbacUploadCellValue(cell, value) {
   if (!cell) return;
-  const valueText = String(value === undefined || value === null || value === '' ? 'NUL' : value);
+  const valueText = String(value === undefined || value === null || value === '' ? 'NA' : value);
   const select = cell.querySelector('select');
   if (select && !String(valueText).includes('<select')) {
     const match = Array.from(select.options).find(opt => opt.text.trim().toLowerCase() === valueText.trim().toLowerCase());
@@ -1343,7 +1343,7 @@ function isAnnexureViewId(id) {
   return /^anx[1-7]$/.test(id) || /^annexure-[b-k]$/.test(id);
 }
 function isCoreAnnexureViewId(id) {
-  return /^anx[1-7]$/.test(id);
+  return /^anx[1-7]$/.test(id) || id === 'annexure-f' || id === 'annexure-k';
 }
 function getAnnexureInstructionText(id) {
   const map = {
@@ -1431,7 +1431,9 @@ function refreshCoreAnnexurePreview(id) {
     anx4: window.exportAnx4PDF,
     anx5: window.exportAnx5PDF,
     anx6: window.exportAnx6PDF,
-    anx7: window.exportAnx7PDF
+    anx7: window.exportAnx7PDF,
+    'annexure-f': window.exportAnnexureFPDF,
+    'annexure-k': window.exportAnnexureKPDF
   }[id];
   if (typeof fn !== 'function') return;
   const run = () => fn(null, true);
@@ -1443,6 +1445,94 @@ function refreshCoreAnnexurePreview(id) {
   } else {
     setTimeout(run, 80);
   }
+}
+function setScopedText(root, selector, value) {
+  const el = root?.querySelector?.(selector);
+  if (el) el.textContent = value;
+}
+function sumTableColumn(table, index) {
+  let total = 0;
+  table?.querySelectorAll?.('tbody tr').forEach(tr => {
+    total += parseFloat(String(tr.cells[index]?.innerText || '').replace(/,/g, '')) || 0;
+  });
+  return total;
+}
+function recalcKnownAnnexureTable(table, changedCell = null) {
+  if (!table) return;
+  const id = table.id || '';
+  const changedIndex = changedCell ? Array.from(changedCell.parentElement?.children || []).indexOf(changedCell) : -1;
+  const rows = Array.from(table.querySelectorAll('tbody tr'));
+  const isChanged = (...indices) => changedIndex < 0 || indices.includes(changedIndex);
+  if ((id.startsWith('anx2-leases') || id.startsWith('anx5-mining')) && isChanged(4, id.startsWith('anx2') ? 9 : 10, id.startsWith('anx2') ? 10 : 11)) {
+    rows.forEach(tr => {
+      const cells = tr.cells;
+      const area = parseFloat(cells[4]?.innerText) || 0;
+      const bulkDensity = parseFloat(cells[id.startsWith('anx2') ? 9 : 10]?.innerText) || 0;
+      const depth = parseFloat(cells[id.startsWith('anx2') ? 10 : 11]?.innerText) || 0;
+      const gross = area * 10000 * depth * bulkDensity;
+      const net = gross * 0.60;
+      const grossCell = cells[id.startsWith('anx2') ? 11 : 12];
+      const netCell = cells[id.startsWith('anx2') ? 12 : 13];
+      if (grossCell) grossCell.innerText = gross > 0 ? gross.toFixed(2) : '0.00';
+      if (netCell) netCell.innerText = net > 0 ? net.toFixed(2) : '0.00';
+    });
+  }
+  if ((id.startsWith('anx2-patta') || id.startsWith('anx5-patta')) && isChanged(3)) {
+    rows.forEach(tr => {
+      const cells = tr.cells;
+      const area = parseFloat(cells[3]?.innerText) || 0;
+      const reserve = Math.round(area * 10000 * 3 * 1.52);
+      const mineral = Math.round(reserve * 0.60);
+      if (cells[9]) cells[9].innerText = reserve;
+      if (cells[10]) cells[10].innerText = mineral;
+    });
+  }
+  if ((id.includes('cluster') || table.closest('#view-anx3, #view-anx6')) && table.querySelectorAll('thead th').length === 9 && isChanged(6)) {
+    rows.forEach(tr => {
+      const excav = parseFloat(String(tr.cells[6]?.innerText || '').replace(/,/g, '')) || 0;
+      if (tr.cells[7]) tr.cells[7].innerText = (excav * 0.6).toFixed(2);
+    });
+  }
+  if (id.startsWith('anx2-patta')) {
+    setScopedText(table, 'tfoot [id^="patta-sum-area"]', sumTableColumn(table, 3).toFixed(2));
+    setScopedText(table, 'tfoot [id^="patta-sum-reserve"]', sumTableColumn(table, 9).toFixed(0));
+    setScopedText(table, 'tfoot [id^="patta-sum-mineral"]', sumTableColumn(table, 10).toFixed(2));
+  } else if (id.startsWith('anx2-desilt')) {
+    setScopedText(table, 'tfoot [id^="desilt-sum-size"]', sumTableColumn(table, 7).toFixed(2));
+  } else if (id.startsWith('anx5-mining')) {
+    setScopedText(table, 'tfoot [id^="mining-total-area"]', sumTableColumn(table, 4).toFixed(2));
+    setScopedText(table, 'tfoot [id^="mining-total-exc"]', sumTableColumn(table, 12).toFixed(2));
+    setScopedText(table, 'tfoot [id^="mining-total-exc60"]', sumTableColumn(table, 13).toFixed(2));
+  } else if (id.startsWith('anx5-patta')) {
+    setScopedText(table, 'tfoot [id^="patta-total-area"]', sumTableColumn(table, 3).toFixed(2));
+    setScopedText(table, 'tfoot [id^="patta-total-res"]', sumTableColumn(table, 9).toFixed(0));
+    setScopedText(table, 'tfoot [id^="patta-total-min"]', sumTableColumn(table, 10).toFixed(2));
+  } else if (id.startsWith('anx5-desilt')) {
+    setScopedText(table, 'tfoot [id^="desilt-total-size"]', sumTableColumn(table, 7).toFixed(2));
+  }
+  const headerCount = table.querySelectorAll('thead th').length;
+  const totalRow = table.querySelector('tfoot tr');
+  if (totalRow && headerCount === 9 && table.closest('#view-anx3, #view-anx6')) {
+    const cells = totalRow.cells;
+    if (cells[1]) cells[1].textContent = sumTableColumn(table, 5).toFixed(2);
+    if (cells[2]) cells[2].textContent = sumTableColumn(table, 6).toFixed(2);
+    if (cells[3]) cells[3].textContent = sumTableColumn(table, 7).toFixed(2);
+  } else if (totalRow && headerCount === 10 && table.closest('#view-anx3, #view-anx6')) {
+    const cells = totalRow.cells;
+    if (cells[1]) cells[1].textContent = sumTableColumn(table, 7).toFixed(2);
+    if (cells[2]) cells[2].textContent = sumTableColumn(table, 8).toFixed(2);
+  }
+}
+function recalcKnownAnnexureTablesIn(root) {
+  root?.querySelectorAll?.('table').forEach(table => recalcKnownAnnexureTable(table));
+}
+function normalizeClonedAnnexureRowButtons(root) {
+  root?.querySelectorAll?.('tbody button[onclick]').forEach(button => {
+    const onclick = button.getAttribute('onclick') || '';
+    if (/delCluster|delCont|deleteClusterRowAnx6|deleteContiguousRowAnx6/.test(onclick)) {
+      button.setAttribute('onclick', "delRow(this); setTimeout(() => recalcKnownAnnexureTable(this.closest('table')), 20)");
+    }
+  });
 }
 function addGenericAnnexureRow(table, viewId) {
   const tbody = table ? table.querySelector('tbody') : null;
@@ -1465,7 +1555,10 @@ function addGenericAnnexureRow(table, viewId) {
     tr.appendChild(td);
   }
   tbody.appendChild(tr);
+  normalizeClonedAnnexureRowButtons(tr);
   if (window.initLucide) window.initLucide();
+  recalcKnownAnnexureTable(table);
+  if (window.debouncedSaveState) window.debouncedSaveState();
   refreshCoreAnnexurePreview(viewId);
 }
 function addGenericAnnexureColumn(table, viewId) {
@@ -1484,12 +1577,220 @@ function addGenericAnnexureColumn(table, viewId) {
     td.textContent = 'NA';
     row.insertBefore(td, actionCell || null);
   });
+  table.querySelectorAll('tfoot tr').forEach(row => {
+    const actionCell = Array.from(row.children).find(td => td.querySelector('button') || td.classList.contains('no-print'));
+    const td = document.createElement('td');
+    td.contentEditable = 'true';
+    td.textContent = 'NA';
+    row.insertBefore(td, actionCell || null);
+  });
+  recalcKnownAnnexureTable(table);
+  if (window.debouncedSaveState) window.debouncedSaveState();
   refreshCoreAnnexurePreview(viewId);
+}
+function getViewIdForAnnexureElement(el) {
+  const view = el?.closest?.('.view[id^="view-"]');
+  return view ? view.id.replace(/^view-/, '') : currentViewId;
+}
+function scheduleCoreAnnexureRefreshFromElement(el, delay = 100) {
+  const id = getViewIdForAnnexureElement(el);
+  if (!isCoreAnnexureViewId(id)) return;
+  clearTimeout(window.__coreAnnexureRefreshTimer);
+  window.__coreAnnexureRefreshTimer = setTimeout(() => refreshCoreAnnexurePreview(id), delay);
+}
+function addGenericAnnexureRowFromButton(btn) {
+  const table = btn?.closest?.('.annexure-f-table-block, .annexure-k-table-block, .table-block-card, .anx-section, .card')?.querySelector('table');
+  addGenericAnnexureRow(table, getViewIdForAnnexureElement(btn));
+}
+function addGenericTableBlockFromSelector(selector) {
+  const block = document.querySelector(selector);
+  const btn = block?.querySelector?.('button[onclick*="addGenericTableBlock"]');
+  if (btn) addGenericTableBlock(btn);
+}
+function annexureTableSelectorForPrefix(viewId, baseId) {
+  const safeViewId = String(viewId || '').replace(/"/g, '\\"');
+  const safeBaseId = String(baseId || '').replace(/"/g, '\\"');
+  return `#view-${safeViewId} table[id^="${safeBaseId}"]`;
+}
+function annexureTablesByPrefix(viewId, baseId) {
+  return Array.from(document.querySelectorAll(annexureTableSelectorForPrefix(viewId, baseId)));
+}
+let annexureCloneSequence = 0;
+function uniqueAnnexureCloneId(baseId, suffix) {
+  const cleanBase = String(baseId || 'annexure-table').replace(/-clone-\d+(?:-\d+)+$/, '');
+  let id;
+  do {
+    annexureCloneSequence += 1;
+    id = `${cleanBase}-clone-${Date.now()}-${annexureCloneSequence}-${suffix}`;
+  } while (document.getElementById(id));
+  return id;
+}
+function rewriteInlineReferences(root, idMap) {
+  [root, ...root.querySelectorAll('*')].forEach(el => {
+    ['onclick', 'onchange', 'oninput', 'onblur', 'for', 'aria-controls', 'aria-labelledby', 'aria-describedby', 'href'].forEach(attr => {
+      const value = el.getAttribute(attr);
+      if (!value) return;
+      let rewritten = value;
+      idMap.forEach((newId, oldId) => {
+        rewritten = rewritten.split(oldId).join(newId);
+      });
+      el.setAttribute(attr, rewritten);
+    });
+  });
+}
+function inlineHandlerReferencesId(handler, id) {
+  if (!handler || !id) return false;
+  return handler.includes(`'${id}'`) || handler.includes(`"${id}"`) || handler.includes(`#${id}`);
+}
+function prepareGenericClonedTableBlock(block, sourceTable, newTable, viewId) {
+  if (!block || !newTable) return;
+  block.querySelectorAll('.anx-table-live-actions').forEach(el => el.remove());
+  block.querySelectorAll('[data-live-controls-attached]').forEach(el => delete el.dataset.liveControlsAttached);
+  const addButtons = Array.from(block.querySelectorAll('button')).filter(button => {
+    const text = (button.innerText || '').trim();
+    const onclick = button.getAttribute('onclick') || '';
+    if (/add another table/i.test(text) || onclick.includes('addGenericTableBlock')) return false;
+    if (/excel|template|download|remove|delete/i.test(text)) return false;
+    return /add/i.test(text) || onclick.includes('addRow') || onclick.includes('addClusterRow') || onclick.includes('addCont');
+  });
+  addButtons.forEach(button => {
+    const onclick = button.getAttribute('onclick') || '';
+    const usesThisTable = inlineHandlerReferencesId(onclick, newTable?.id);
+    const usesSourceTable = inlineHandlerReferencesId(onclick, sourceTable?.id);
+    if (!usesThisTable || usesSourceTable) {
+      button.setAttribute('onclick', 'window.addGenericAnnexureRowFromButton(this)');
+    }
+  });
+  block.querySelectorAll('[onblur], [oninput], [onchange]').forEach(el => {
+    const handler = el.getAttribute('onblur') || el.getAttribute('oninput') || el.getAttribute('onchange') || '';
+    if (/clusterData|contData|anx6ClusterData|anx6ContiguousData/.test(handler)) {
+      el.removeAttribute('onblur');
+      el.removeAttribute('oninput');
+      el.removeAttribute('onchange');
+    }
+  });
+  normalizeClonedAnnexureRowButtons(block);
+  const title = block.querySelector('.anx-section-title, .editable-title, .annexure-f-block-title, .annexure-k-block-title');
+  if (title) {
+    const siblings = Array.from(block.parentElement?.children || []).filter(el =>
+      el.classList?.contains('anx-section') ||
+      el.classList?.contains('annexure-f-table-block') ||
+      el.classList?.contains('annexure-k-table-block') ||
+      el.classList?.contains('table-block-card')
+    );
+    const siblingCount = Math.max(1, siblings.indexOf(block) + 1 || siblings.length);
+    const baseText = (title.textContent || '').replace(/\s+-?\s*Table\s+\d+:?$/i, '').trim();
+    if (baseText) title.textContent = `${baseText} - Table ${siblingCount}:`;
+    if (title.hasAttribute('data-key')) title.setAttribute('data-key', `${title.getAttribute('data-key')}-${Date.now()}`);
+  }
+  block.querySelectorAll('.rm-sec-a-btn, .rm-sec-btn').forEach(btn => {
+    btn.style.display = 'inline-flex';
+    btn.setAttribute('onclick', "this.closest('.anx-section, .annexure-f-table-block, .annexure-k-table-block, .table-block-card')?.remove(); scheduleCoreAnnexureRefreshFromElement(this)");
+  });
+  newTable.querySelectorAll('tbody tr').forEach(tr => {
+    Array.from(tr.cells).forEach(td => {
+      if (!td.querySelector('button, select') && !td.hasAttribute('contenteditable')) td.contentEditable = 'true';
+    });
+  });
+  if (window.initLucide) window.initLucide();
+  if (typeof addCoreAnnexureTableControls === 'function') addCoreAnnexureTableControls(viewId);
+  recalcKnownAnnexureTablesIn(block);
+  scheduleCoreAnnexureRefreshFromElement(block, 50);
+}
+function addGenericTableBlock(btn) {
+  const sourceBlock = btn?.closest?.('.anx-section');
+  const sourceTable = sourceBlock?.querySelector?.('table');
+  const viewId = getViewIdForAnnexureElement(btn);
+  if (!sourceBlock || !sourceTable || !isCoreAnnexureViewId(viewId)) return;
+  const clone = sourceBlock.cloneNode(true);
+  const idMap = new Map();
+  const elementsWithIds = [
+    ...(clone.id ? [clone] : []),
+    ...clone.querySelectorAll('[id]')
+  ];
+  elementsWithIds.forEach((el, index) => {
+    const oldId = el.id;
+    const newId = uniqueAnnexureCloneId(oldId, index + 1);
+    idMap.set(oldId, newId);
+    el.id = newId;
+    if (el.name === oldId) el.name = newId;
+  });
+  if (!idMap.has(sourceTable.id)) {
+    const clonedTable = clone.querySelector('table');
+    if (clonedTable) {
+      const newId = uniqueAnnexureCloneId(sourceTable.id, 1);
+      idMap.set(sourceTable.id, newId);
+      clonedTable.id = newId;
+      clonedTable.name = newId;
+    }
+  }
+  rewriteInlineReferences(clone, idMap);
+  sourceBlock.insertAdjacentElement('afterend', clone);
+  prepareGenericClonedTableBlock(clone, sourceTable, clone.querySelector('table'), viewId);
+  if (window.debouncedSaveState) window.debouncedSaveState();
+}
+window.addGenericTableBlock = addGenericTableBlock;
+window.addGenericAnnexureRowFromButton = addGenericAnnexureRowFromButton;
+window.addGenericTableBlockFromSelector = addGenericTableBlockFromSelector;
+window.addSectionABlockAnx1 = function() {
+  const wrapper = document.getElementById('section-a-wrapper-anx1');
+  const blocks = wrapper ? wrapper.querySelectorAll('.section-a-block-anx1') : [];
+  const block = blocks[blocks.length - 1];
+  const btn = block?.querySelector?.('button[onclick*="addGenericTableBlock"]');
+  if (btn) addGenericTableBlock(btn);
+};
+window.annexureTablesByPrefix = annexureTablesByPrefix;
+function ensureGenericTableCloneButtons(view) {
+  view?.querySelectorAll?.('.anx-section').forEach(section => {
+    if (!section.querySelector('table') || section.querySelector('button[onclick*="addGenericTableBlock"]')) return;
+    const footer = section.querySelector('.section-footer');
+    if (!footer) return;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-xs btn-outline';
+    button.style.cssText = 'display:inline-flex;align-items:center;gap:6px;margin-left:auto;';
+    button.setAttribute('onclick', 'window.addGenericTableBlock(this)');
+    button.innerHTML = `
+      <i data-lucide="copy" style="width:12px;height:12px;"></i>
+      <span>Add Another Table</span>`;
+    footer.appendChild(button);
+  });
 }
 function addCoreAnnexureTableControls(id) {
   if (!isCoreAnnexureViewId(id)) return;
   const view = document.getElementById('view-' + id);
   if (!view) return;
+  ensureGenericTableCloneButtons(view);
+  if (view.dataset.coreAnnexurePreviewEvents !== 'true') {
+    view.dataset.coreAnnexurePreviewEvents = 'true';
+    view.addEventListener('input', event => {
+      const table = event.target.closest('table');
+      if (table) {
+        recalcKnownAnnexureTable(table, event.target.closest('td, th'));
+        scheduleCoreAnnexureRefreshFromElement(event.target, 180);
+      }
+    });
+    view.addEventListener('change', event => {
+      const table = event.target.closest('table');
+      if (table) {
+        recalcKnownAnnexureTable(table, event.target.closest('td, th'));
+        scheduleCoreAnnexureRefreshFromElement(event.target, 120);
+      }
+    });
+    view.addEventListener('click', event => {
+      if (event.target.closest('button') && event.target.closest('table, .section-footer, .anx-table-live-actions')) {
+        setTimeout(() => recalcKnownAnnexureTablesIn(view), 20);
+        scheduleCoreAnnexureRefreshFromElement(event.target, 180);
+      }
+    });
+    view.addEventListener('blur', event => {
+      const table = event.target.closest('table');
+      if (table) {
+        recalcKnownAnnexureTable(table, event.target.closest('td, th'));
+        scheduleCoreAnnexureRefreshFromElement(event.target, 120);
+      }
+    }, true);
+  }
   view.querySelectorAll('table').forEach(table => {
     if (table.dataset.liveControlsAttached === 'true') return;
     table.dataset.liveControlsAttached = 'true';
@@ -1508,15 +1809,7 @@ function addCoreAnnexureTableControls(id) {
       </button>`;
     wrap.insertAdjacentElement('afterend', actions);
     actions.querySelector('.anx-live-add-row')?.addEventListener('click', () => {
-      const block = table.closest('.card, .anx-section') || view;
-      const existingAddRow = Array.from(block.querySelectorAll('button')).find(btn => {
-        const text = (btn.innerText || '').trim().toLowerCase();
-        const onclick = btn.getAttribute('onclick') || '';
-        return btn !== actions.querySelector('.anx-live-add-row') && text.includes('add row') && !onclick.includes('addGenericAnnexureRow');
-      });
-      if (existingAddRow) existingAddRow.click();
-      else addGenericAnnexureRow(table, id);
-      refreshCoreAnnexurePreview(id);
+      addGenericAnnexureRow(table, id);
     });
     actions.querySelector('.anx-live-add-column')?.addEventListener('click', () => addGenericAnnexureColumn(table, id));
   });
@@ -5078,7 +5371,10 @@ window.openAddUserPrompt = openAddUserPrompt;
 /* ══════════════════════════════════════
    TABLES & ANNEXURES HELPERS
 ══════════════════════════════════════ */
-function delRow(btn) { btn.closest('tr').remove(); }
+function delRow(btn) {
+  scheduleCoreAnnexureRefreshFromElement(btn, 120);
+  btn.closest('tr')?.remove();
+}
 function addRow(tableId, cells) {
   const tbody=document.querySelector('#'+tableId+' tbody');
   if (!tbody) return;
@@ -5086,7 +5382,7 @@ function addRow(tableId, cells) {
   tr.innerHTML=cells.map(c=>{
     let val = String(c !== undefined && c !== null ? c : '').trim();
     if (val === '' && !val.includes('<button') && !val.includes('<select')) {
-      val = 'NUL';
+      val = 'NA';
     }
     return `<td contenteditable>${val}</td>`;
   }).join('');
@@ -5242,7 +5538,7 @@ function populateTableFromSheet(tableId, rows) {
     const cells = [];
     headers.forEach((_, index) => {
       let value = row[index] !== undefined ? String(row[index]).trim() : '';
-      if (value === '') value = 'NUL';
+      if (value === '') value = 'NA';
       cells.push(value);
     });
     if (headers.includes('action')) {
@@ -5563,7 +5859,7 @@ function addRowAnx1(tableId, cellDataArray) {
     const td = document.createElement('td');
     let dataStr = String(data !== undefined && data !== null ? data : '').trim();
     if (dataStr === '' && !dataStr.includes('<button') && !dataStr.includes('<select')) {
-      dataStr = 'NUL';
+      dataStr = 'NA';
     }
     if (!dataStr.includes('<button') && !dataStr.includes('<select')) {
       if (isUserReadOnly()) {
@@ -5662,42 +5958,43 @@ function getPrintableTableCells(row) {
     return !isActionText && !isNoPrint && !hasButton;
   });
 }
+function annexurePrintableValue(cell) {
+  if (!cell) return 'NA';
+  const select = cell.querySelector('select');
+  const value = select ? select.value : cell.innerText;
+  const text = String(value === undefined || value === null ? '' : value).trim();
+  return text || 'NA';
+}
 function getAnx1TableRows(tableId) {
   return Array.from(document.querySelectorAll(`#${tableId} tbody tr`)).map(row => (
     getPrintableTableCells(row).map(cell => {
-      const select = cell.querySelector('select');
-      return select ? select.value : cell.innerText.trim();
+      return annexurePrintableValue(cell);
     })
   ));
 }
 function buildAnx1PreviewMarkup() {
-  const sections = [
-    {
-      id: 'anx1-rivers',
-      title: 'a) Rivers:',
-      headers: ['River Name/M-Sand Plant', 'Total Stretch of River (in KM)', 'Type of River (Perennial or Non Perennial)']
-    },
-    {
-      id: 'anx1-desilt',
-      title: 'b) De-Siltation Location (Lakes/Ponds/Dams etc.):',
-      headers: ['Name of Reservoir/Dams', 'Maintain/Controlled by State Govt./PSU etc.', 'Latitude', 'Longitude', 'District', 'Tehsil', 'Village', 'Size (Ha)']
-    },
-    {
-      id: 'anx1-patta',
-      title: 'c) Patta lands/Khatedari land:',
-      headers: ['Owner', 'SL. No', 'Area (Ha)', 'District', 'Tehsil', 'Village', 'Agricultural Land (Yes/No)']
-    },
-    {
-      id: 'anx1-msand',
-      title: 'd) M-Sand Plants:',
-      headers: ['Plant Name', 'Owner', 'District', 'Tehsil', 'Village', 'Geo-location', 'Quantity Tonnes/Annum']
-    }
-  ];
+  const sections = [];
+  document.querySelectorAll('#view-anx1 .anx-section').forEach(sec => {
+    const table = sec.querySelector('table');
+    if (!table) return;
+    const titleEl = sec.querySelector('.anx-section-title');
+    const title = titleEl ? titleEl.innerText.trim() : 'Section:';
+    const headers = getPrintableTableCells(table.querySelector('thead tr')).map(th => th.innerText.trim());
+    sections.push({
+      tableElement: table,
+      title: title,
+      headers: headers
+    });
+  });
   const sectionHtml = sections.map(section => {
-    const rows = getAnx1TableRows(section.id);
+    const rows = Array.from(section.tableElement.querySelectorAll('tbody tr')).map(row => (
+      getPrintableTableCells(row).map(cell => {
+        return annexurePrintableValue(cell);
+      })
+    ));
     const body = rows.length
-      ? rows.map(row => `<tr>${section.headers.map((_, i) => `<td>${escapeAnx1Html(row[i] || 'NUL')}</td>`).join('')}</tr>`).join('')
-      : `<tr><td colspan="${section.headers.length}" class="empty">Data not provided</td></tr>`;
+      ? rows.map(row => `<tr>${section.headers.map((_, i) => `<td>${escapeAnx1Html(row[i] || 'NA')}</td>`).join('')}</tr>`).join('')
+      : `<tr><td colspan="${section.headers.length}" class="empty">NA</td></tr>`;
     return `
       <section class="anx1-section">
         <h2>${escapeAnx1Html(section.title)}</h2>
@@ -5862,7 +6159,7 @@ function executePDFExport(isLivePreview) {
 }
 window.exportAnx1PDF = exportAnx1PDF;
 document.addEventListener('input', (e) => {
-  if (e.target.closest('#anx1-rivers, #anx1-desilt, #anx1-patta, #anx1-msand')) {
+  if (e.target.closest('#view-anx1 table')) {
     scheduleAnx1LivePreview(700);
   }
 });
@@ -6229,7 +6526,7 @@ function addRowAnx2(tableId, cellDataArray) {
     const td = document.createElement('td');
     let dataStr = String(data !== undefined && data !== null ? data : '').trim();
     if (dataStr === '' && !dataStr.includes('<button') && !dataStr.includes('<select')) {
-      dataStr = 'NUL';
+      dataStr = 'NA';
     }
     if (!dataStr.includes('<button') && !dataStr.includes('<select')) {
       if (isUserReadOnly()) {
@@ -6244,11 +6541,11 @@ function addRowAnx2(tableId, cellDataArray) {
         if (index === 4 || index === 9 || index === 10) {
           td.addEventListener('input', function() { calcLeaseRow(this); });
         }
-      } else if (tableId === 'anx2-patta') {
+      } else if (tableId.startsWith('anx2-patta')) {
         if (index === 3) {
           td.addEventListener('input', function() { calcPattaRow(this); });
         }
-      } else if (tableId === 'anx2-desilt') {
+      } else if (tableId.startsWith('anx2-desilt')) {
         if (index === 7) {
           td.addEventListener('input', function() { calcDesiltRow(this); });
         }
@@ -6264,17 +6561,18 @@ function addRowAnx2(tableId, cellDataArray) {
     tr.children[11].contentEditable = "false";
     tr.children[12].contentEditable = "false";
   }
-  else if(tableId === 'anx2-patta') {
+  else if(tableId.startsWith('anx2-patta')) {
     tr.children[9].classList.add('p-reserve');
     tr.children[10].classList.add('p-min');
-    tr.children[9].addEventListener('input', updatePattaGrandTotals);
-    tr.children[10].addEventListener('input', updatePattaGrandTotals);
+    tr.children[9].addEventListener('input', () => updatePattaGrandTotals(tbody.closest('table')));
+    tr.children[10].addEventListener('input', () => updatePattaGrandTotals(tbody.closest('table')));
   }
-  else if(tableId === 'anx2-desilt') {
-    tr.children[7].addEventListener('input', updateDesiltGrandTotals);
+  else if(tableId.startsWith('anx2-desilt')) {
+    tr.children[7].addEventListener('input', () => updateDesiltGrandTotals(tbody.closest('table')));
   }
   tbody.appendChild(tr);
   if (window.initLucide) window.initLucide();
+  recalcKnownAnnexureTable(tbody.closest('table'));
 }
 function calcLeaseRow(element) {
   const row = element.closest('tr');
@@ -6295,13 +6593,13 @@ function calcPattaRow(element) {
   const mineral = Math.round(reserve * 0.60);
   cells[9].innerText = reserve;
   cells[10].innerText = mineral;
-  updatePattaGrandTotals();
+  updatePattaGrandTotals(row.closest('table'));
 }
 function calcDesiltRow(element) {
-  updateDesiltGrandTotals();
+  updateDesiltGrandTotals(element.closest('table'));
 }
-function updatePattaGrandTotals() {
-  const table = document.getElementById('anx2-patta');
+function updatePattaGrandTotals(targetTable) {
+  const table = targetTable || document.getElementById('anx2-patta');
   if (!table) return;
   let areaSum = 0, resSum = 0, minSum = 0;
   table.querySelectorAll('tbody tr').forEach(tr => {
@@ -6309,9 +6607,9 @@ function updatePattaGrandTotals() {
     resSum += parseFloat(tr.querySelector('.p-reserve')?.innerText || tr.children[9].innerText) || 0;
     minSum += parseFloat(tr.querySelector('.p-min')?.innerText || tr.children[10].innerText) || 0;
   });
-  const sumAreaEl = document.getElementById('patta-sum-area');
-  const sumReserveEl = document.getElementById('patta-sum-reserve');
-  const sumMineralEl = document.getElementById('patta-sum-mineral');
+  const sumAreaEl = table.querySelector('[id^="patta-sum-area"]');
+  const sumReserveEl = table.querySelector('[id^="patta-sum-reserve"]');
+  const sumMineralEl = table.querySelector('[id^="patta-sum-mineral"]');
   if (sumAreaEl) sumAreaEl.innerText = areaSum.toFixed(2);
   if (sumReserveEl) sumReserveEl.innerText = resSum.toFixed(0);
   if (sumMineralEl) sumMineralEl.innerText = minSum.toFixed(2);
@@ -6319,14 +6617,14 @@ function updatePattaGrandTotals() {
 function updatePattaTotals() {
   updatePattaGrandTotals();
 }
-function updateDesiltGrandTotals() {
-  const table = document.getElementById('anx2-desilt');
+function updateDesiltGrandTotals(targetTable) {
+  const table = targetTable || document.getElementById('anx2-desilt');
   if (!table) return;
   let sizeSum = 0;
   table.querySelectorAll('tbody tr').forEach(tr => {
     sizeSum += parseFloat(tr.children[7].innerText) || 0;
   });
-  const sumSizeEl = document.getElementById('desilt-sum-size');
+  const sumSizeEl = table.querySelector('[id^="desilt-sum-size"]');
   if (sumSizeEl) sumSizeEl.innerText = sizeSum.toFixed(2);
 }
 function updateDesiltTotals() {
@@ -6335,11 +6633,12 @@ function updateDesiltTotals() {
 function delRowAnx2(btn) {
   const table = btn.closest('table');
   const tableId = table.id;
-  btn.closest('tr').remove();
-  if (tableId === 'anx2-patta') {
-    updatePattaGrandTotals();
-  } else if (tableId === 'anx2-desilt') {
-    updateDesiltGrandTotals();
+  scheduleCoreAnnexureRefreshFromElement(btn, 120);
+  btn.closest('tr')?.remove();
+  if (tableId.startsWith('anx2-patta')) {
+    updatePattaGrandTotals(table);
+  } else if (tableId.startsWith('anx2-desilt')) {
+    updateDesiltGrandTotals(table);
   }
 }
 function addNewLeaseRow(btn) {
@@ -6364,9 +6663,7 @@ function addSectionABlock() {
   addNewLeaseRow(newBlock.querySelector('.section-footer button'));
 }
 function getCellText(td) {
-  const select = td.querySelector('select');
-  if (select) return select.value;
-  return td.innerText.trim();
+  return annexurePrintableValue(td);
 }
 function exportAnx2PDF(btn, isLivePreview = false) {
   const { jsPDF } = window.jspdf;
@@ -6380,11 +6677,10 @@ function exportAnx2PDF(btn, isLivePreview = false) {
     doc.setTextColor(0, 0, 0);
     doc.text("Page " + data.pageNumber, pageWidth / 2, pageHeight - 20, { align: "center" });
   };
-  const extractData = (tableId) => {
-    const tbl = document.getElementById(tableId);
-    const headers = getPrintableTableCells(tbl.querySelector('thead tr')).map(th => th.innerText.trim().replace(/\n/g, ' '));
+  const extractData = (tableElement) => {
+    const headers = getPrintableTableCells(tableElement.querySelector('thead tr')).map(th => th.innerText.trim().replace(/\n/g, ' '));
     const rows = [];
-    tbl.querySelectorAll('tbody tr').forEach(tr => {
+    tableElement.querySelectorAll('tbody tr').forEach(tr => {
       const row = [];
       getPrintableTableCells(tr).forEach(td => row.push(getCellText(td)));
       rows.push(row);
@@ -6409,8 +6705,8 @@ function exportAnx2PDF(btn, isLivePreview = false) {
     const titleExt = sectionABlocks.length > 1 ? ` (Table ${index + 1})` : '';
     doc.text(`> List of Potential Mining Leases (Existing & Proposed) Rivers${titleExt}:`, 40, startY);
     startY += 15;
-    const tableId = block.querySelector('table').id;
-    const leaseData = extractData(tableId);
+    const tableEl = block.querySelector('table');
+    const leaseData = extractData(tableEl);
     doc.autoTable({
       startY: startY,
       head: [leaseData.headers],
@@ -6426,72 +6722,108 @@ function exportAnx2PDF(btn, isLivePreview = false) {
     });
     startY = doc.lastAutoTable.finalY + 15;
   });
-  doc.addPage();
-  startY = 80;
-  doc.setFont("times", "bold");
-  doc.setFontSize(11);
-  doc.text("> Patta Lands/Khatedari Land: (Existing & Proposed):", 40, startY);
-  startY += 15;
-  const pattaData = extractData('anx2-patta');
-  doc.autoTable({
-    startY: startY,
-    head: [pattaData.headers],
-    body: pattaData.rows,
-    foot: [
-      [{content: 'Total', colSpan: 3, styles: {halign: 'center', fontStyle: 'bold'}},
-       {content: document.getElementById('patta-sum-area').innerText, styles: {fontStyle: 'bold'}},
-       '', '', '', '', '',
-       {content: document.getElementById('patta-sum-reserve').innerText, styles: {fontStyle: 'bold'}},
-       {content: document.getElementById('patta-sum-mineral').innerText, styles: {fontStyle: 'bold'}},
-       '', '']
-    ],
-    theme: 'grid',
-    styles: { font: 'times', fontSize: 8, textColor: 0, lineColor: 0, lineWidth: 0.5, cellPadding: 3, valign: 'middle', halign: 'center' },
-    headStyles: { fillColor: false, fontStyle: 'bold', textColor: 0 },
-    footStyles: { fillColor: false, fontStyle: 'bold', textColor: 0 },
-    didDrawPage: (data) => drawHeaderFooter(data)
+
+  const pattaTables = document.querySelectorAll('#view-anx2 table[id^="anx2-patta"]');
+  pattaTables.forEach((tbl, pattaIndex) => {
+    if (pattaIndex > 0 || startY > pageHeight - 120) {
+      doc.addPage();
+      startY = 80;
+    }
+    doc.setFont("times", "bold");
+    doc.setFontSize(11);
+    const titleExt = pattaTables.length > 1 ? ` (Table ${pattaIndex + 1})` : '';
+    doc.text(`> Patta Lands/Khatedari Land: (Existing & Proposed)${titleExt}:`, 40, startY);
+    startY += 15;
+    const pattaData = extractData(tbl);
+    const areaSumEl = tbl.querySelector('[id^="patta-sum-area"]');
+    const reserveSumEl = tbl.querySelector('[id^="patta-sum-reserve"]');
+    const mineralSumEl = tbl.querySelector('[id^="patta-sum-mineral"]');
+    doc.autoTable({
+      startY: startY,
+      head: [pattaData.headers],
+      body: pattaData.rows,
+      foot: [
+        [{content: 'Total', colSpan: 3, styles: {halign: 'center', fontStyle: 'bold'}},
+         {content: areaSumEl ? areaSumEl.innerText : '0.00', styles: {fontStyle: 'bold'}},
+         '', '', '', '', '',
+         {content: reserveSumEl ? reserveSumEl.innerText : '0.00', styles: {fontStyle: 'bold'}},
+         {content: mineralSumEl ? mineralSumEl.innerText : '0.00', styles: {fontStyle: 'bold'}},
+         '', '']
+      ],
+      theme: 'grid',
+      styles: { font: 'times', fontSize: 8, textColor: 0, lineColor: 0, lineWidth: 0.5, cellPadding: 3, valign: 'middle', halign: 'center' },
+      headStyles: { fillColor: false, fontStyle: 'bold', textColor: 0 },
+      footStyles: { fillColor: false, fontStyle: 'bold', textColor: 0 },
+      didDrawPage: (data) => drawHeaderFooter(data)
+    });
+    startY = doc.lastAutoTable.finalY + 15;
   });
-  startY = doc.lastAutoTable.finalY + 15;
+
   doc.setFont("times", "italic");
   doc.setFontSize(9);
   doc.text("(Reference: Table of the Proforma for the district of Jalandhar , Page no 560 -563 )", pageWidth - 40, startY, {align: 'right'});
   startY += 20;
-  doc.setFont("times", "bold");
-  doc.setFontSize(11);
-  doc.text("> De-Siltation Location: (Lakes/Ponds/Dams etc.) (Existing & Proposed)", 40, startY);
-  startY += 15;
-  const desiltData = extractData('anx2-desilt');
-  doc.autoTable({
-    startY: startY,
-    head: [desiltData.headers],
-    body: desiltData.rows,
-    foot: [
-      [{content: 'Total', colSpan: 7, styles: {halign: 'center', fontStyle: 'bold'}},
-       {content: document.getElementById('desilt-sum-size').innerText, styles: {fontStyle: 'bold'}},
-       '', '']
-    ],
-    theme: 'grid',
-    styles: { font: 'times', fontSize: 8, textColor: 0, lineColor: 0, lineWidth: 0.5, cellPadding: 3, valign: 'middle', halign: 'center' },
-    headStyles: { fillColor: false, fontStyle: 'bold', textColor: 0 },
-    footStyles: { fillColor: false, fontStyle: 'bold', textColor: 0 }
+
+  const desiltTables = document.querySelectorAll('#view-anx2 table[id^="anx2-desilt"]');
+  desiltTables.forEach((tbl, desiltIndex) => {
+    if (desiltIndex > 0 || startY > pageHeight - 120) {
+      doc.addPage();
+      startY = 80;
+    }
+    doc.setFont("times", "bold");
+    doc.setFontSize(11);
+    const titleExt = desiltTables.length > 1 ? ` (Table ${desiltIndex + 1})` : '';
+    doc.text(`> De-Siltation Location: (Lakes/Ponds/Dams etc.) (Existing & Proposed)${titleExt}`, 40, startY);
+    startY += 15;
+    const desiltData = extractData(tbl);
+    const sizeSumEl = tbl.querySelector('[id^="desilt-sum-size"]');
+    doc.autoTable({
+      startY: startY,
+      head: [desiltData.headers],
+      body: desiltData.rows,
+      foot: [
+        [{content: 'Total', colSpan: 7, styles: {halign: 'center', fontStyle: 'bold'}},
+         {content: sizeSumEl ? sizeSumEl.innerText : '0.00', styles: {fontStyle: 'bold'}},
+         '', '']
+      ],
+      theme: 'grid',
+      styles: { font: 'times', fontSize: 8, textColor: 0, lineColor: 0, lineWidth: 0.5, cellPadding: 3, valign: 'middle', halign: 'center' },
+      headStyles: { fillColor: false, fontStyle: 'bold', textColor: 0 },
+      footStyles: { fillColor: false, fontStyle: 'bold', textColor: 0 },
+      didDrawPage: (data) => drawHeaderFooter(data)
+    });
+    startY = doc.lastAutoTable.finalY + 15;
   });
-  startY = doc.lastAutoTable.finalY + 15;
+
   doc.setFont("times", "bold");
   doc.text("Note: The quantity of De-silting shall be assessed as per actual site conditions at the time of de-silting and got approved from the competent authority.", pageWidth / 2, startY, {align: 'center'});
   startY += 30;
-  doc.setFontSize(11);
-  doc.text("> M-Sand Plants : ( Existing & Proposed)", 40, startY);
-  startY += 15;
-  const msandData = extractData('anx2-msand');
-  doc.autoTable({
-    startY: startY,
-    head: [msandData.headers],
-    body: msandData.rows,
-    theme: 'grid',
-    styles: { font: 'times', fontSize: 8, textColor: 0, lineColor: 0, lineWidth: 0.5, cellPadding: 3, valign: 'middle', halign: 'center' },
-    headStyles: { fillColor: false, fontStyle: 'bold', textColor: 0 },
-    margin: { left: doc.internal.pageSize.getWidth()/2 - 300, right: doc.internal.pageSize.getWidth()/2 - 300 } 
+
+  const msandTables = document.querySelectorAll('#view-anx2 table[id^="anx2-msand"]');
+  msandTables.forEach((tbl, msandIndex) => {
+    if (msandIndex > 0 || startY > pageHeight - 120) {
+      doc.addPage();
+      startY = 80;
+    }
+    doc.setFont("times", "bold");
+    doc.setFontSize(11);
+    const titleExt = msandTables.length > 1 ? ` (Table ${msandIndex + 1})` : '';
+    doc.text(`> M-Sand Plants : ( Existing & Proposed)${titleExt}`, 40, startY);
+    startY += 15;
+    const msandData = extractData(tbl);
+    doc.autoTable({
+      startY: startY,
+      head: [msandData.headers],
+      body: msandData.rows,
+      theme: 'grid',
+      styles: { font: 'times', fontSize: 8, textColor: 0, lineColor: 0, lineWidth: 0.5, cellPadding: 3, valign: 'middle', halign: 'center' },
+      headStyles: { fillColor: false, fontStyle: 'bold', textColor: 0 },
+      margin: { left: doc.internal.pageSize.getWidth()/2 - 300, right: doc.internal.pageSize.getWidth()/2 - 300 },
+      didDrawPage: (data) => drawHeaderFooter(data)
+    });
+    startY = doc.lastAutoTable.finalY + 15;
   });
+
   if (isLivePreview) {
     const blob = doc.output('blob');
     const blobUrl = URL.createObjectURL(blob);
@@ -7253,12 +7585,9 @@ function exportAnx3PDF(btn, isLivePreview = false) {
     doc.text("Page " + data.pageNumber, pageWidth / 2, pageHeight - 20, { align: "center" });
   };
   const getCellTextLocal = (td) => {
-    const select = td.querySelector('select');
-    if (select) return select.value;
-    return td.innerText.trim();
+    return annexurePrintableValue(td);
   };
-  const extractData = (tableId) => {
-    const tbl = document.getElementById(tableId);
+  const extractData = (tbl) => {
     if (!tbl) return { headers: [], rows: [] };
     const headers = getPrintableTableCells(tbl.querySelector('thead tr')).map(th => th.innerText.trim().replace(/\n/g, ' '));
     const rows = [];
@@ -7274,9 +7603,9 @@ function exportAnx3PDF(btn, isLivePreview = false) {
         const tds = getPrintableTableCells(tr);
         for (let i = 0; i < tds.length; i++) {
           const colSpan = parseInt(tds[i].getAttribute('colspan') || '1');
-          row.push(tds[i].innerText.trim());
+          row.push(annexurePrintableValue(tds[i]));
           for (let c = 1; c < colSpan; c++) {
-            row.push('');
+            row.push('NA');
           }
         }
         if (row.length > headers.length) {
@@ -7288,43 +7617,60 @@ function exportAnx3PDF(btn, isLivePreview = false) {
     }
     return { headers, rows };
   };
-  doc.setFont("times", "bold");
-  doc.setFontSize(12);
-  doc.setTextColor(0, 0, 0);
-  doc.text("Annexure-III", pageWidth - 40, 55, { align: "right" });
-  doc.setFont("times", "bold");
-  doc.setFontSize(11);
-  doc.text("> a) Cluster Details:", 40, startY);
-  startY += 15;
-  const clusterDataPdf = extractData('anx3-clusters');
-  doc.autoTable({
-    startY: startY,
-    head: [clusterDataPdf.headers],
-    body: clusterDataPdf.rows,
-    theme: 'grid',
-    styles: { font: 'times', fontSize: 8, textColor: 0, lineColor: 0, lineWidth: 0.5, cellPadding: 4, valign: 'middle', halign: 'center' },
-    headStyles: { fillColor: false, fontStyle: 'bold', halign: 'center', textColor: 0 },
-    didDrawPage: (data) => drawHeaderFooter(data)
+
+  const clusterTables = document.querySelectorAll('#view-anx3 table[id^="anx3-clusters"]');
+  clusterTables.forEach((tbl, clusterIndex) => {
+    if (clusterIndex > 0) {
+      doc.addPage();
+      startY = 80;
+    } else {
+      doc.setFont("times", "bold");
+      doc.setFontSize(12);
+      doc.setTextColor(0, 0, 0);
+      doc.text("Annexure-III", pageWidth - 40, 55, { align: "right" });
+    }
+    doc.setFont("times", "bold");
+    doc.setFontSize(11);
+    const titleExt = clusterTables.length > 1 ? ` (Table ${clusterIndex + 1})` : '';
+    doc.text(`> a) Cluster Details:${titleExt}`, 40, startY);
+    startY += 15;
+    const clusterDataPdf = extractData(tbl);
+    doc.autoTable({
+      startY: startY,
+      head: [clusterDataPdf.headers],
+      body: clusterDataPdf.rows,
+      theme: 'grid',
+      styles: { font: 'times', fontSize: 8, textColor: 0, lineColor: 0, lineWidth: 0.5, cellPadding: 4, valign: 'middle', halign: 'center' },
+      headStyles: { fillColor: false, fontStyle: 'bold', halign: 'center', textColor: 0 },
+      didDrawPage: (data) => drawHeaderFooter(data)
+    });
+    startY = doc.lastAutoTable.finalY + 30;
   });
-  startY = doc.lastAutoTable.finalY + 30;
-  if (startY > pageHeight - 120) {
-    doc.addPage();
-    startY = 80;
-  }
-  doc.setFont("times", "bold");
-  doc.setFontSize(11);
-  doc.text("> b) Contiguous Clusters:", 40, startY);
-  startY += 15;
-  const contDataPdf = extractData('anx3-contiguous');
-  doc.autoTable({
-    startY: startY,
-    head: [contDataPdf.headers],
-    body: contDataPdf.rows,
-    theme: 'grid',
-    styles: { font: 'times', fontSize: 8, textColor: 0, lineColor: 0, lineWidth: 0.5, cellPadding: 4, valign: 'middle', halign: 'center' },
-    headStyles: { fillColor: false, fontStyle: 'bold', halign: 'center', textColor: 0 },
-    didDrawPage: (data) => drawHeaderFooter(data)
+
+  const contTables = document.querySelectorAll('#view-anx3 table[id^="anx3-contiguous"]');
+  contTables.forEach((tbl, contIndex) => {
+    if (contIndex > 0 || startY > pageHeight - 120) {
+      doc.addPage();
+      startY = 80;
+    }
+    doc.setFont("times", "bold");
+    doc.setFontSize(11);
+    const titleExt = contTables.length > 1 ? ` (Table ${contIndex + 1})` : '';
+    doc.text(`> b) Contiguous Clusters:${titleExt}`, 40, startY);
+    startY += 15;
+    const contDataPdf = extractData(tbl);
+    doc.autoTable({
+      startY: startY,
+      head: [contDataPdf.headers],
+      body: contDataPdf.rows,
+      theme: 'grid',
+      styles: { font: 'times', fontSize: 8, textColor: 0, lineColor: 0, lineWidth: 0.5, cellPadding: 4, valign: 'middle', halign: 'center' },
+      headStyles: { fillColor: false, fontStyle: 'bold', halign: 'center', textColor: 0 },
+      didDrawPage: (data) => drawHeaderFooter(data)
+    });
+    startY = doc.lastAutoTable.finalY + 30;
   });
+
   if (isLivePreview) {
     const blob = doc.output('blob');
     const blobUrl = URL.createObjectURL(blob);
@@ -7387,7 +7733,8 @@ function makeSelect(options, selected) {
   return html + `</select>`;
 }
 function delRow(btn) {
-  btn.closest('tr').remove();
+  scheduleCoreAnnexureRefreshFromElement(btn, 120);
+  btn.closest('tr')?.remove();
 }
 function renderRouteRow(data) {
   const [sl, lease, route, tpLease, tpAll, len, roadType, recom, constr, map] = data;
@@ -7443,6 +7790,7 @@ function addAnx4Row(btn) {
   const n = tbody.rows.length + 1;
   tbody.insertAdjacentHTML("beforeend", renderRouteRow([n, "", "", "", "", "", "Unpaved", "Unpaved", "Lease Owner", "Route Map attached"]));
   if (window.initLucide) window.initLucide();
+  if (typeof refreshCoreAnnexurePreview === 'function') refreshCoreAnnexurePreview('anx4');
 }
 function addAnx4ClusterRow(btn) {
   let tbody;
@@ -7454,12 +7802,14 @@ function addAnx4ClusterRow(btn) {
   if (!tbody) return;
   tbody.insertAdjacentHTML("beforeend", renderClusterRow(["", "", "", "", "", "Unpaved", "Unpaved", "Lease Owner", "Route Map attached"]));
   if (window.initLucide) window.initLucide();
+  if (typeof refreshCoreAnnexurePreview === 'function') refreshCoreAnnexurePreview('anx4');
 }
 function addRouteTableBlock(prefill = false) {
   const container = document.getElementById("individual-routes-container");
   if (!container) return;
   const tableIdx = container.querySelectorAll(".table-block-card").length + 1;
   const title = tableIdx === 1 ? "Individual Lease Routes" : `Individual Lease Routes - Table ${tableIdx}`;
+  const tableId = `anx4-routes-${Date.now()}-${tableIdx}`;
   const cardHtml = `
   <div class="card table-block-card" style="margin-bottom:24px;" data-type="individual">
     <div class="card-hd" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
@@ -7489,7 +7839,7 @@ function addRouteTableBlock(prefill = false) {
     </div>
     <div class="card-bd">
       <div class="tbl-wrap">
-        <table class="anx-tbl" style="min-width:1100px">
+        <table class="anx-tbl" id="${tableId}" name="${tableId}" style="min-width:1100px">
           <thead>
             <tr>
               <th style="width:50px">Sl.No.</th>
@@ -7521,12 +7871,15 @@ function addRouteTableBlock(prefill = false) {
   }
   updateDeleteButtonsVisibility("individual");
   if (window.initLucide) window.initLucide();
+  if (typeof addCoreAnnexureTableControls === 'function') addCoreAnnexureTableControls('anx4');
+  if (typeof refreshCoreAnnexurePreview === 'function') refreshCoreAnnexurePreview('anx4');
 }
 function addClusterTableBlock(prefill = false) {
   const container = document.getElementById("cluster-routes-container");
   if (!container) return;
   const tableIdx = container.querySelectorAll(".table-block-card").length + 1;
   const title = tableIdx === 1 ? "Cluster Transportation Routes" : `Cluster Transportation Routes - Table ${tableIdx}`;
+  const tableId = `anx4-cluster-routes-${Date.now()}-${tableIdx}`;
   const cardHtml = `
   <div class="card table-block-card" style="margin-bottom:24px;" data-type="cluster">
     <div class="card-hd" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
@@ -7556,7 +7909,7 @@ function addClusterTableBlock(prefill = false) {
     </div>
     <div class="card-bd">
       <div class="tbl-wrap">
-        <table class="anx-tbl" style="min-width:1000px">
+        <table class="anx-tbl" id="${tableId}" name="${tableId}" style="min-width:1000px">
           <thead>
             <tr>
               <th style="min-width:130px">Cluster No</th>
@@ -7587,6 +7940,8 @@ function addClusterTableBlock(prefill = false) {
   }
   updateDeleteButtonsVisibility("cluster");
   if (window.initLucide) window.initLucide();
+  if (typeof addCoreAnnexureTableControls === 'function') addCoreAnnexureTableControls('anx4');
+  if (typeof refreshCoreAnnexurePreview === 'function') refreshCoreAnnexurePreview('anx4');
 }
 function deleteTableBlock(btn) {
   const card = btn.closest('.card');
@@ -7601,6 +7956,7 @@ function deleteTableBlock(btn) {
     card.remove();
     updateDeleteButtonsVisibility(type);
     toast("Table block deleted.", "success");
+    if (typeof refreshCoreAnnexurePreview === 'function') refreshCoreAnnexurePreview('anx4');
   }
 }
 function updateDeleteButtonsVisibility(type) {
@@ -7640,16 +7996,16 @@ function downloadRouteTemplate(btn) {
   const data = Array.from(rows).map(tr => {
     const cells = tr.querySelectorAll("td");
     return [
-      cells[0].textContent.trim(),
-      cells[1].textContent.trim(),
-      cells[2].textContent.trim(),
-      cells[3].textContent.trim(),
-      cells[4].textContent.trim(),
-      cells[5].textContent.trim(),
-      cells[6].querySelector("select").value,
-      cells[7].querySelector("select").value,
-      cells[8].querySelector("select").value,
-      cells[9].textContent.trim(),
+      annexurePrintableValue(cells[0]),
+      annexurePrintableValue(cells[1]),
+      annexurePrintableValue(cells[2]),
+      annexurePrintableValue(cells[3]),
+      annexurePrintableValue(cells[4]),
+      annexurePrintableValue(cells[5]),
+      annexurePrintableValue(cells[6]),
+      annexurePrintableValue(cells[7]),
+      annexurePrintableValue(cells[8]),
+      annexurePrintableValue(cells[9]),
     ];
   });
   const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
@@ -7673,15 +8029,15 @@ function downloadClusterTemplate(btn) {
   const data = Array.from(rows).map(tr => {
     const cells = tr.querySelectorAll("td");
     return [
-      cells[0].textContent.trim(),
-      cells[1].textContent.trim(),
-      cells[2].textContent.trim(),
-      cells[3].textContent.trim(),
-      cells[4].textContent.trim(),
-      cells[5].querySelector("select").value,
-      cells[6].querySelector("select").value,
-      cells[7].querySelector("select").value,
-      cells[8].textContent.trim(),
+      annexurePrintableValue(cells[0]),
+      annexurePrintableValue(cells[1]),
+      annexurePrintableValue(cells[2]),
+      annexurePrintableValue(cells[3]),
+      annexurePrintableValue(cells[4]),
+      annexurePrintableValue(cells[5]),
+      annexurePrintableValue(cells[6]),
+      annexurePrintableValue(cells[7]),
+      annexurePrintableValue(cells[8]),
     ];
   });
   const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
@@ -7810,18 +8166,18 @@ function exportAnx4PDF(btn, isLivePreview = false) {
     ]];
     const rows = tbody.querySelectorAll("tr");
     const routeData = Array.from(rows).map(tr => {
-      const cells = tr.querySelectorAll("td");
+      const cells = getPrintableTableCells(tr);
       return [
-        cells[0].textContent.trim(),
-        cells[1].textContent.trim(),
-        cells[2].textContent.trim(),
-        cells[3].textContent.trim(),
-        cells[4].textContent.trim(),
-        cells[5].textContent.trim(),
-        cells[6].querySelector("select").value,
-        cells[7].querySelector("select").value,
-        cells[8].querySelector("select").value,
-        cells[9].textContent.trim(),
+        annexurePrintableValue(cells[0]),
+        annexurePrintableValue(cells[1]),
+        annexurePrintableValue(cells[2]),
+        annexurePrintableValue(cells[3]),
+        annexurePrintableValue(cells[4]),
+        annexurePrintableValue(cells[5]),
+        annexurePrintableValue(cells[6]),
+        annexurePrintableValue(cells[7]),
+        annexurePrintableValue(cells[8]),
+        annexurePrintableValue(cells[9]),
       ];
     });
     doc.autoTable({
@@ -7893,17 +8249,17 @@ function exportAnx4PDF(btn, isLivePreview = false) {
     ]];
     const rows = tbody.querySelectorAll("tr");
     const clusterData = Array.from(rows).map(tr => {
-      const cells = tr.querySelectorAll("td");
+      const cells = getPrintableTableCells(tr);
       return [
-        cells[0].textContent.trim(),
-        cells[1].textContent.trim(),
-        cells[2].textContent.trim(),
-        cells[3].textContent.trim(),
-        cells[4].textContent.trim(),
-        cells[5].querySelector("select").value,
-        cells[6].querySelector("select").value,
-        cells[7].querySelector("select").value,
-        cells[8].textContent.trim(),
+        annexurePrintableValue(cells[0]),
+        annexurePrintableValue(cells[1]),
+        annexurePrintableValue(cells[2]),
+        annexurePrintableValue(cells[3]),
+        annexurePrintableValue(cells[4]),
+        annexurePrintableValue(cells[5]),
+        annexurePrintableValue(cells[6]),
+        annexurePrintableValue(cells[7]),
+        annexurePrintableValue(cells[8]),
       ];
     });
     doc.autoTable({
@@ -8361,7 +8717,7 @@ function addRowAnx5(tableId, cellDataArray) {
     const td = document.createElement('td');
     let dataStr = String(data !== undefined && data !== null ? data : '').trim();
     if (dataStr === '' && !dataStr.includes('<button') && !dataStr.includes('<select')) {
-      dataStr = 'NUL';
+      dataStr = 'NA';
     }
     if (!dataStr.includes('<button') && !dataStr.includes('<select')) {
       td.contentEditable = "true";
@@ -8425,7 +8781,8 @@ function addNewMsandRowAnx5(btn) {
 window.addNewMsandRowAnx5 = addNewMsandRowAnx5;
 function delRowAnx5(btn) {
   const table = btn.closest('table');
-  btn.closest('tr').remove();
+  scheduleCoreAnnexureRefreshFromElement(btn, 120);
+  btn.closest('tr')?.remove();
   recalcAnx5Totals();
 }
 window.delRowAnx5 = delRowAnx5;
@@ -8512,8 +8869,8 @@ function calcAnx5DesiltRow(element) {
 window.calcAnx5DesiltRow = calcAnx5DesiltRow;
 function recalcAnx5Totals() {
   const miningTables = document.querySelectorAll('[id^="anx5-mining"]');
-  let miningArea = 0, miningExc = 0, miningExc60 = 0;
   miningTables.forEach(table => {
+    let miningArea = 0, miningExc = 0, miningExc60 = 0;
     table.querySelectorAll('tbody tr').forEach(tr => {
       const cells = tr.cells;
       if (cells.length > 13) {
@@ -8522,16 +8879,13 @@ function recalcAnx5Totals() {
         miningExc60 += parseFloat(cells[13]?.textContent) || 0;
       }
     });
+    setScopedText(table, 'tfoot [id^="mining-total-area"]', miningArea.toFixed(2));
+    setScopedText(table, 'tfoot [id^="mining-total-exc"]', miningExc.toFixed(2));
+    setScopedText(table, 'tfoot [id^="mining-total-exc60"]', miningExc60.toFixed(2));
   });
-  const miningAreaEl = document.getElementById('mining-total-area');
-  const miningExcEl = document.getElementById('mining-total-exc');
-  const miningExc60El = document.getElementById('mining-total-exc60');
-  if (miningAreaEl) miningAreaEl.textContent = miningArea.toFixed(2);
-  if (miningExcEl) miningExcEl.textContent = miningExc.toFixed(2);
-  if (miningExc60El) miningExc60El.textContent = miningExc60.toFixed(2);
   const pattaTables = document.querySelectorAll('[id^="anx5-patta"]');
-  let pattaArea = 0, pattaRes = 0, pattaMin = 0;
   pattaTables.forEach(table => {
+    let pattaArea = 0, pattaRes = 0, pattaMin = 0;
     table.querySelectorAll('tbody tr').forEach(tr => {
       const cells = tr.cells;
       if (cells.length > 10) {
@@ -8540,25 +8894,21 @@ function recalcAnx5Totals() {
         pattaMin += parseFloat(cells[10]?.textContent) || 0;
       }
     });
+    setScopedText(table, 'tfoot [id^="patta-total-area"]', pattaArea.toFixed(2));
+    setScopedText(table, 'tfoot [id^="patta-total-res"]', pattaRes.toFixed(0));
+    setScopedText(table, 'tfoot [id^="patta-total-min"]', pattaMin.toFixed(2));
   });
-  const pattaAreaEl = document.getElementById('patta-total-area');
-  const pattaResEl = document.getElementById('patta-total-res');
-  const pattaMinEl = document.getElementById('patta-total-min');
-  if (pattaAreaEl) pattaAreaEl.textContent = pattaArea.toFixed(2);
-  if (pattaResEl) pattaResEl.textContent = pattaRes.toFixed(0);
-  if (pattaMinEl) pattaMinEl.textContent = pattaMin.toFixed(2);
   const desiltTables = document.querySelectorAll('[id^="anx5-desilt"]');
-  let desiltSize = 0;
   desiltTables.forEach(table => {
+    let desiltSize = 0;
     table.querySelectorAll('tbody tr').forEach(tr => {
       const cells = tr.cells;
       if (cells.length > 7) {
         desiltSize += parseFloat(cells[7]?.textContent) || 0;
       }
     });
+    setScopedText(table, 'tfoot [id^="desilt-total-size"]', desiltSize.toFixed(2));
   });
-  const desiltSizeEl = document.getElementById('desilt-total-size');
-  if (desiltSizeEl) desiltSizeEl.textContent = desiltSize.toFixed(2);
 }
 window.recalcAnx5Totals = recalcAnx5Totals;
 function exportAnx5PDF(btn, isLivePreview = false) {
@@ -8575,17 +8925,14 @@ function exportAnx5PDF(btn, isLivePreview = false) {
     doc.text("Page " + data.pageNumber, pageWidth / 2, pageHeight - 20, { align: "center" });
   };
   const getCellTextAnx5 = (td) => {
-    const select = td.querySelector('select');
-    if (select) return select.value;
-    return td.innerText.trim();
+    return annexurePrintableValue(td);
   };
-  const extractDataAnx5 = (tableId) => {
-    const tbl = document.getElementById(tableId);
-    if (!tbl) return null;
-    const headerRow = tbl.querySelector('thead tr');
+  const extractDataAnx5 = (tableElement) => {
+    if (!tableElement) return null;
+    const headerRow = tableElement.querySelector('thead tr');
     const headers = getPrintableTableCells(headerRow).map(th => th.innerText.trim().replace(/\n/g, ' '));
     const rows = [];
-    tbl.querySelectorAll('tbody tr').forEach(tr => {
+    tableElement.querySelectorAll('tbody tr').forEach(tr => {
       const row = [];
       getPrintableTableCells(tr).forEach(td => row.push(getCellTextAnx5(td)));
       rows.push(row);
@@ -8611,16 +8958,16 @@ function exportAnx5PDF(btn, isLivePreview = false) {
     doc.setFontSize(11);
     doc.text(titleText.startsWith('>') ? titleText : `> ${titleText}`, 40, startY);
     startY += 15;
-    const tableId = block.querySelector('table').id;
-    const data = extractDataAnx5(tableId);
+    const tableEl = block.querySelector('table');
+    const data = extractDataAnx5(tableEl);
     let foot = undefined;
     if (index === miningBlocks.length - 1) {
       foot = [[
         { content: 'Total', colSpan: 4, styles: { halign: 'center', fontStyle: 'bold' } },
-        { content: document.getElementById('mining-total-area')?.textContent || '0.00', styles: { fontStyle: 'bold' } },
+        { content: block.querySelector('[id^="mining-total-area"]')?.textContent || '0.00', styles: { fontStyle: 'bold' } },
         '', '', '', '', '', '', '',
-        { content: document.getElementById('mining-total-exc')?.textContent || '0.00', styles: { fontStyle: 'bold' } },
-        { content: document.getElementById('mining-total-exc60')?.textContent || '0.00', styles: { fontStyle: 'bold' } },
+        { content: block.querySelector('[id^="mining-total-exc"]')?.textContent || '0.00', styles: { fontStyle: 'bold' } },
+        { content: block.querySelector('[id^="mining-total-exc60"]')?.textContent || '0.00', styles: { fontStyle: 'bold' } },
         '', '', ''
       ]];
     }
@@ -8661,16 +9008,16 @@ function exportAnx5PDF(btn, isLivePreview = false) {
     doc.setFontSize(11);
     doc.text(titleText.startsWith('>') ? titleText : `> ${titleText}`, 40, startY);
     startY += 15;
-    const tableId = block.querySelector('table').id;
-    const data = extractDataAnx5(tableId);
+    const tableEl = block.querySelector('table');
+    const data = extractDataAnx5(tableEl);
     let foot = undefined;
     if (index === pattaBlocks.length - 1) {
       foot = [[
         { content: 'Total', colSpan: 3, styles: { halign: 'center', fontStyle: 'bold' } },
-        { content: document.getElementById('patta-total-area')?.textContent || '0.00', styles: { fontStyle: 'bold' } },
+        { content: block.querySelector('[id^="patta-total-area"]')?.textContent || '0.00', styles: { fontStyle: 'bold' } },
         '', '', '', '', '',
-        { content: document.getElementById('patta-total-res')?.textContent || '0.00', styles: { fontStyle: 'bold' } },
-        { content: document.getElementById('patta-total-min')?.textContent || '0.00', styles: { fontStyle: 'bold' } },
+        { content: block.querySelector('[id^="patta-total-res"]')?.textContent || '0.00', styles: { fontStyle: 'bold' } },
+        { content: block.querySelector('[id^="patta-total-min"]')?.textContent || '0.00', styles: { fontStyle: 'bold' } },
         '', ''
       ]];
     }
@@ -8703,13 +9050,13 @@ function exportAnx5PDF(btn, isLivePreview = false) {
     doc.setFontSize(11);
     doc.text(titleText.startsWith('>') ? titleText : `> ${titleText}`, 40, startY);
     startY += 15;
-    const tableId = block.querySelector('table').id;
-    const data = extractDataAnx5(tableId);
+    const tableEl = block.querySelector('table');
+    const data = extractDataAnx5(tableEl);
     let foot = undefined;
     if (index === desiltBlocks.length - 1) {
       foot = [[
         { content: 'Total', colSpan: 7, styles: { halign: 'center', fontStyle: 'bold' } },
-        { content: document.getElementById('desilt-total-size')?.textContent || '0.00', styles: { fontStyle: 'bold' } },
+        { content: block.querySelector('[id^="desilt-total-size"]')?.textContent || '0.00', styles: { fontStyle: 'bold' } },
         '', ''
       ]];
     }
@@ -8746,8 +9093,8 @@ function exportAnx5PDF(btn, isLivePreview = false) {
     doc.setFontSize(11);
     doc.text(titleText.startsWith('>') ? titleText : `> ${titleText}`, 40, startY);
     startY += 15;
-    const tableId = block.querySelector('table').id;
-    const data = extractDataAnx5(tableId);
+    const tableEl = block.querySelector('table');
+    const data = extractDataAnx5(tableEl);
     doc.autoTable({
       startY: startY,
       head: [data.headers],
@@ -9274,8 +9621,8 @@ function validateMappedAnx6Row(row, sectionType, rowNumber) {
   const invalid = numeric.filter(key => String(row[key]).trim().toUpperCase() !== 'NA' && (!Number.isFinite(toNumberAnx6(row[key])) || toNumberAnx6(row[key]) < 0));
   if (invalid.length) throw new Error(`Invalid values in row ${rowNumber}: ${invalid.join(', ')} must be valid numbers.`);
 }
-function extractTableDataAnx6(tableId) {
-  const table = document.getElementById(tableId);
+function extractTableDataAnx6(tableOrId) {
+  const table = typeof tableOrId === 'string' ? document.getElementById(tableOrId) : tableOrId;
   if (!table) return { headers: [], rows: [], foot: [] };
   const headers = getPrintableTableCells(table.querySelector('thead tr')).map(th => th.innerText.trim().replace(/\n/g, ' '));
   const rows = Array.from(table.querySelectorAll('tbody tr')).map(tr => {
@@ -9285,8 +9632,8 @@ function extractTableDataAnx6(tableId) {
     const out = [];
     getPrintableTableCells(tr).forEach(td => {
       const span = parseInt(td.getAttribute('colspan') || '1', 10);
-      out.push(td.innerText.trim());
-      for (let i = 1; i < span; i++) out.push('');
+      out.push(annexurePrintableValue(td));
+      for (let i = 1; i < span; i++) out.push('NA');
     });
     return out.slice(0, headers.length);
   });
@@ -9306,52 +9653,45 @@ function exportAnx6PDF(btn, isLivePreview = false) {
     doc.setTextColor(0, 0, 0);
     doc.text("Page " + data.pageNumber, pageWidth / 2, pageHeight - 20, { align: 'center' });
   };
-  doc.setFont('times', 'bold');
-  doc.setFontSize(9);
-  doc.setTextColor(0, 0, 0);
-  doc.text('Annexure-VI', pageWidth - 55, 60, { align: 'right' });
-  const clusterTitle = document.querySelector('#view-anx6 .anx-section:nth-of-type(1) .editable-title')?.innerText.trim() || 'Final Cluster & Contiguous Cluster details Clusters:';
-  doc.setFont('times', 'bold');
-  doc.setFontSize(8.5);
-  doc.text('> ' + clusterTitle, 60, startY);
-  startY += 35;
-  const cluster = extractTableDataAnx6('anx6-final-clusters');
-  doc.autoTable({
-    startY,
-    head: [cluster.headers],
-    body: cluster.rows,
-    foot: cluster.foot,
-    theme: 'grid',
-    margin: { left: 55, right: 40, bottom: 70 },
-    styles: { font: 'times', fontSize: 6.7, textColor: 0, lineColor: 0, lineWidth: 0.5, cellPadding: 2, valign: 'middle', halign: 'center', overflow: 'linebreak' },
-    headStyles: { fillColor: false, fontStyle: 'bold', textColor: 0, halign: 'center' },
-    footStyles: { fillColor: false, fontStyle: 'bold', textColor: 0, halign: 'center' },
-    columnStyles: { 2: { cellWidth: 92 }, 4: { cellWidth: 68 }, 7: { cellWidth: 86 } },
-    didDrawPage: drawHeaderFooter
-  });
-  startY = doc.lastAutoTable.finalY + 28;
-  if (startY > pageHeight - 170) {
-    doc.addPage();
-    startY = 80;
-  }
-  const contiguousTitle = document.querySelector('#view-anx6 .anx-section:nth-of-type(2) .editable-title')?.innerText.trim() || 'Final Contiguous Clusters:';
-  doc.setFont('times', 'bold');
-  doc.setFontSize(8.5);
-  doc.text(contiguousTitle, 60, startY);
-  startY += 18;
-  const contiguous = extractTableDataAnx6('anx6-contiguous-clusters');
-  doc.autoTable({
-    startY,
-    head: [contiguous.headers],
-    body: contiguous.rows,
-    foot: contiguous.foot,
-    theme: 'grid',
-    margin: { left: 55, right: 40, bottom: 70 },
-    styles: { font: 'times', fontSize: 7, textColor: 0, lineColor: 0, lineWidth: 0.5, cellPadding: 2, valign: 'middle', halign: 'center', overflow: 'linebreak' },
-    headStyles: { fillColor: false, fontStyle: 'bold', textColor: 0, halign: 'center' },
-    footStyles: { fillColor: false, fontStyle: 'bold', textColor: 0, halign: 'center' },
-    columnStyles: { 1: { cellWidth: 58 }, 3: { cellWidth: 62 }, 6: { cellWidth: 76 }, 8: { cellWidth: 88 } },
-    didDrawPage: drawHeaderFooter
+  const sections = document.querySelectorAll('#view-anx6 .anx-section');
+  sections.forEach((sec, index) => {
+    if (index > 0) {
+      doc.addPage();
+      startY = 80;
+    } else {
+      doc.setFont('times', 'bold');
+      doc.setFontSize(9);
+      doc.setTextColor(0, 0, 0);
+      doc.text('Annexure-VI', pageWidth - 55, 60, { align: 'right' });
+    }
+    const titleEl = sec.querySelector('.editable-title');
+    const titleText = titleEl ? titleEl.innerText.trim() : 'Table Section:';
+    doc.setFont('times', 'bold');
+    doc.setFontSize(8.5);
+    doc.text('> ' + titleText, 60, startY);
+    startY += 18;
+    
+    const table = sec.querySelector('table');
+    if (table) {
+      const isContiguous = table.id.includes('contiguous');
+      const tableData = extractTableDataAnx6(table);
+      doc.autoTable({
+        startY,
+        head: [tableData.headers],
+        body: tableData.rows,
+        foot: tableData.foot,
+        theme: 'grid',
+        margin: { left: 55, right: 40, bottom: 70 },
+        styles: { font: 'times', fontSize: isContiguous ? 7 : 6.7, textColor: 0, lineColor: 0, lineWidth: 0.5, cellPadding: 2, valign: 'middle', halign: 'center', overflow: 'linebreak' },
+        headStyles: { fillColor: false, fontStyle: 'bold', textColor: 0, halign: 'center' },
+        footStyles: { fillColor: false, fontStyle: 'bold', textColor: 0, halign: 'center' },
+        columnStyles: isContiguous 
+          ? { 1: { cellWidth: 58 }, 3: { cellWidth: 62 }, 6: { cellWidth: 76 }, 8: { cellWidth: 88 } }
+          : { 2: { cellWidth: 92 }, 4: { cellWidth: 68 }, 7: { cellWidth: 86 } },
+        didDrawPage: drawHeaderFooter
+      });
+      startY = doc.lastAutoTable.finalY + 28;
+    }
   });
   if (isLivePreview) {
     const blob = doc.output('blob');
@@ -9611,7 +9951,8 @@ function deleteRowAnx7(btn) {
     toast('At least one row is required.', 'warn');
     return;
   }
-  btn.closest('tr').remove();
+  scheduleCoreAnnexureRefreshFromElement(btn, 120);
+  btn.closest('tr')?.remove();
   renumberRouteRowsAnx7(tbody);
 }
 window.deleteRowAnx7 = deleteRowAnx7;
@@ -9629,6 +9970,7 @@ function addRouteRowAnx7(btn) {
   tbody.insertAdjacentHTML('beforeend', renderRouteRowAnx7([next, 'NA', 'NA', 'NA', 'NA', 'NA', 'NA', 'NA', 'NA', 'NA']));
   markCardStateAnx7(card, 'edited');
   if (window.initLucide) window.initLucide();
+  if (typeof refreshCoreAnnexurePreview === 'function') refreshCoreAnnexurePreview('anx7');
 }
 window.addRouteRowAnx7 = addRouteRowAnx7;
 function addClusterRowAnx7(btn) {
@@ -9638,6 +9980,7 @@ function addClusterRowAnx7(btn) {
   tbody.insertAdjacentHTML('beforeend', renderClusterRowAnx7(['NA', 'NA', 'NA', 'NA', 'NA', 'NA', 'NA', 'NA', 'NA']));
   markCardStateAnx7(card, 'edited');
   if (window.initLucide) window.initLucide();
+  if (typeof refreshCoreAnnexurePreview === 'function') refreshCoreAnnexurePreview('anx7');
 }
 window.addClusterRowAnx7 = addClusterRowAnx7;
 function markCardStateAnx7(card, state) {
@@ -9680,7 +10023,7 @@ function addRouteTableBlockAnx7(prefill = false, rows = null, title = '') {
     </div>
     <div class="card-bd">
       <div class="tbl-wrap">
-        <table class="anx-tbl anx7-routes-table" id="${id}" style="min-width:1100px">
+        <table class="anx-tbl anx7-routes-table" id="${id}" name="${id}" style="min-width:1100px">
           <thead>
             <tr>
               <th style="width:50px">Sl.No.</th>
@@ -9708,6 +10051,8 @@ function addRouteTableBlockAnx7(prefill = false, rows = null, title = '') {
   renumberTableBlocksAnx7('individual');
   updateDeleteButtonsVisibilityAnx7('individual');
   if (window.initLucide) window.initLucide();
+  if (typeof addCoreAnnexureTableControls === 'function') addCoreAnnexureTableControls('anx7');
+  if (typeof refreshCoreAnnexurePreview === 'function') refreshCoreAnnexurePreview('anx7');
   return card;
 }
 window.addRouteTableBlockAnx7 = addRouteTableBlockAnx7;
@@ -9746,7 +10091,7 @@ function addClusterTableBlockAnx7(prefill = false, rows = null, title = '') {
     </div>
     <div class="card-bd">
       <div class="tbl-wrap">
-        <table class="anx-tbl anx7-cluster-routes-table" id="${id}" style="min-width:1000px">
+        <table class="anx-tbl anx7-cluster-routes-table" id="${id}" name="${id}" style="min-width:1000px">
           <thead>
             <tr>
               <th style="min-width:130px">Cluster No</th>
@@ -9773,6 +10118,8 @@ function addClusterTableBlockAnx7(prefill = false, rows = null, title = '') {
   renumberTableBlocksAnx7('cluster');
   updateDeleteButtonsVisibilityAnx7('cluster');
   if (window.initLucide) window.initLucide();
+  if (typeof addCoreAnnexureTableControls === 'function') addCoreAnnexureTableControls('anx7');
+  if (typeof refreshCoreAnnexurePreview === 'function') refreshCoreAnnexurePreview('anx7');
   return card;
 }
 window.addClusterTableBlockAnx7 = addClusterTableBlockAnx7;
@@ -9812,19 +10159,20 @@ function deleteTableBlockAnx7(btn) {
     renumberTableBlocksAnx7(type);
     updateDeleteButtonsVisibilityAnx7(type);
     toast('Table block deleted.', 'success');
+    if (typeof refreshCoreAnnexurePreview === 'function') refreshCoreAnnexurePreview('anx7');
   }
 }
 window.deleteTableBlockAnx7 = deleteTableBlockAnx7;
 function rowsFromRouteCardAnx7(card) {
   return Array.from(card.querySelectorAll('.anx7-route-table-body tr')).map(tr => {
     const cells = tr.querySelectorAll('td');
-    return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(index => index >= 6 && index <= 8 ? cells[index].querySelector('select').value : cells[index].innerText.trim());
+    return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(index => annexurePrintableValue(cells[index]));
   });
 }
 function rowsFromClusterCardAnx7(card) {
   return Array.from(card.querySelectorAll('.anx7-cluster-table-body tr')).map(tr => {
     const cells = tr.querySelectorAll('td');
-    return [0, 1, 2, 3, 4, 5, 6, 7, 8].map(index => index >= 5 && index <= 7 ? cells[index].querySelector('select').value : cells[index].innerText.trim());
+    return [0, 1, 2, 3, 4, 5, 6, 7, 8].map(index => annexurePrintableValue(cells[index]));
   });
 }
 function downloadTemplateAnx7(headers, rows, sheetName, filename) {
@@ -10457,9 +10805,7 @@ function annexureFDeleteButtonHTML() {
   return `<button class='btn btn-xs btn-danger' onclick='delRowAnnexureF(this)' style='display:${isReadOnly ? 'none' : 'inline-flex'};align-items:center;justify-content:center;padding:4px;'><i data-lucide='trash-2' style='width:12px;height:12px;'></i></button>`;
 }
 function annexureFCellValue(td) {
-  const select = td.querySelector('select');
-  if (select) return select.value;
-  return td.innerText.trim();
+  return annexurePrintableValue(td);
 }
 function annexureFToCSVValue(value) {
   const text = String(value === undefined || value === null ? '' : value);
@@ -10614,7 +10960,7 @@ function addRowAnnexureF(tableId, cellDataArray) {
     const td = document.createElement('td');
     let dataStr = String(data === undefined || data === null ? '' : data).trim();
     if (dataStr === '' && !dataStr.includes('<button') && !dataStr.includes('<select')) {
-      dataStr = 'NUL';
+      dataStr = 'NA';
     }
     if (dataStr.includes('<button') || dataStr.includes('<select')) {
       td.innerHTML = dataStr;
@@ -10638,6 +10984,10 @@ function addRowAnnexureF(tableId, cellDataArray) {
   });
   tbody.appendChild(tr);
   if (window.initLucide) window.initLucide();
+  if (window.debouncedSaveState) window.debouncedSaveState();
+  if (window.pdfPreview && window.pdfPreview.currentView === 'annexure-f') {
+    exportAnnexureFPDF(null, true);
+  }
 }
 function renumberAnnexureFTableBlocks(sectionType) {
   const cfg = ANNEXURE_F_TABLES[sectionType];
@@ -10678,7 +11028,7 @@ function addAnnexureFTableBlock(sectionType) {
   const firstTable = document.getElementById(cfg?.tableId);
   if (!cfg || !container || !firstTable) return;
   const tableIdx = container.querySelectorAll('.annexure-f-table-block').length + 1;
-  const newTableId = `${cfg.tableId}-${tableIdx}`;
+  const newTableId = `${cfg.tableId}-clone-${Date.now()}-${tableIdx}`;
   const headerHtml = Array.from(firstTable.querySelectorAll('thead th')).map(th => th.outerHTML).join('');
   const blockHtml = `
     <div class="annexure-f-table-block" data-section-type="${sectionType}" style="margin-top:18px; padding-top:18px; border-top:1px dashed var(--border);">
@@ -10690,7 +11040,7 @@ function addAnnexureFTableBlock(sectionType) {
         </button>
       </div>
       <div class="tbl-wrap">
-        <table class="anx-tbl annexure-f-table" data-section-type="${sectionType}" id="${newTableId}" style="min-width:${cfg.minWidth}">
+        <table class="anx-tbl annexure-f-table" data-section-type="${sectionType}" id="${newTableId}" name="${newTableId}" style="min-width:${cfg.minWidth}">
           <thead><tr>${headerHtml}</tr></thead>
           <tbody></tbody>
         </table>
@@ -10711,6 +11061,7 @@ function addAnnexureFTableBlock(sectionType) {
   addRowAnnexureF(document.getElementById(newTableId), getAnnexureFEmptyRow(sectionType));
   renumberAnnexureFTableBlocks(sectionType);
   if (typeof applyMoreAnnexureAccess === 'function') applyMoreAnnexureAccess(document.getElementById('view-annexure-f'));
+  if (typeof addCoreAnnexureTableControls === 'function') addCoreAnnexureTableControls('annexure-f');
   if (window.initLucide) window.initLucide();
   if (window.debouncedSaveState) window.debouncedSaveState();
   if (window.pdfPreview && window.pdfPreview.currentView === 'annexure-f') {
@@ -11113,9 +11464,7 @@ function annexureKDeleteButtonHTML() {
   return `<button class='btn btn-xs btn-danger' onclick='delRowAnnexureK(this)' style='display:${isReadOnly ? 'none' : 'inline-flex'};align-items:center;justify-content:center;padding:4px;'><i data-lucide='trash-2' style='width:12px;height:12px;'></i></button>`;
 }
 function annexureKCellValue(td) {
-  const select = td.querySelector('select');
-  if (select) return select.value;
-  return td.innerText.trim();
+  return annexurePrintableValue(td);
 }
 function annexureKToCSVValue(value) {
   const text = String(value === undefined || value === null ? '' : value);
@@ -11272,6 +11621,10 @@ function addRowAnnexureK(tableId, cellDataArray) {
   });
   tbody.appendChild(tr);
   if (window.initLucide) window.initLucide();
+  if (window.debouncedSaveState) window.debouncedSaveState();
+  if (window.pdfPreview && window.pdfPreview.currentView === 'annexure-k') {
+    exportAnnexureKPDF(null, true);
+  }
 }
 function delRowAnnexureK(btn) {
   const row = btn.closest('tr');
@@ -11321,7 +11674,7 @@ function addAnnexureKTableBlock(sectionType) {
   const firstTable = document.getElementById(cfg?.tableId);
   if (!cfg || !container || !firstTable) return;
   const tableIdx = container.querySelectorAll('.annexure-k-table-block').length + 1;
-  const newTableId = `${cfg.tableId}-${tableIdx}`;
+  const newTableId = `${cfg.tableId}-clone-${Date.now()}-${tableIdx}`;
   const headerHtml = Array.from(firstTable.querySelectorAll('thead th')).map(th => th.outerHTML).join('');
   const blockHtml = `
     <div class="annexure-k-table-block" data-section-type="${sectionType}" style="margin-top:18px; padding-top:18px; border-top:1px dashed var(--border);">
@@ -11334,7 +11687,7 @@ function addAnnexureKTableBlock(sectionType) {
       </div>
       <div style="font-size:12px; font-weight:700; color:var(--text-soft); margin-bottom:8px;">Example input values from ${sectionType === 'PROFORMA' ? 'Proforma_Template_One_Example.xlsx' : 'Annexure_A_Template_One_Example.xlsx'}</div>
       <div class="tbl-wrap">
-        <table class="anx-tbl annexure-k-table" data-section-type="${sectionType}" id="${newTableId}" style="min-width:${cfg.minWidth}">
+        <table class="anx-tbl annexure-k-table" data-section-type="${sectionType}" id="${newTableId}" name="${newTableId}" style="min-width:${cfg.minWidth}">
           <thead><tr>${headerHtml}</tr></thead>
           <tbody></tbody>
         </table>
@@ -11357,6 +11710,7 @@ function addAnnexureKTableBlock(sectionType) {
   });
   renumberAnnexureKTableBlocks(sectionType);
   if (typeof applyMoreAnnexureAccess === 'function') applyMoreAnnexureAccess(document.getElementById('view-annexure-k'));
+  if (typeof addCoreAnnexureTableControls === 'function') addCoreAnnexureTableControls('annexure-k');
   if (window.initLucide) window.initLucide();
   if (window.debouncedSaveState) window.debouncedSaveState();
   if (window.pdfPreview && window.pdfPreview.currentView === 'annexure-k') {
@@ -12076,8 +12430,20 @@ function generateFinalPDF() {
     { title: 'ANNEXURE IV(a) - LEASE ROUTES', id: '#anx4-routes' },
     { title: 'ANNEXURE IV(b) - CLUSTER ROUTES', id: '#anx4-cluster-routes' },
     { title: 'ANNEXURE V - BENCH MARK & CORS', id: '#anx5-benchmarks' },
+    { title: 'ANNEXURE V - MINING LEASES', id: '#anx5-mining' },
+    { title: 'ANNEXURE V - PATTA LANDS', id: '#anx5-patta' },
+    { title: 'ANNEXURE V - DE-SILTATION', id: '#anx5-desilt' },
+    { title: 'ANNEXURE V - M-SAND PLANTS', id: '#anx5-msand' },
     { title: 'ANNEXURE VI - FINAL CLUSTERS', id: '#anx6-final-clusters' },
+    { title: 'ANNEXURE VI - CONTIGUOUS CLUSTERS', id: '#anx6-contiguous-clusters' },
+    { title: 'ANNEXURE VII - INDIVIDUAL ROUTES', id: '#anx7-routes' },
+    { title: 'ANNEXURE VII - CLUSTER ROUTES', id: '#anx7-cluster-routes' },
     { title: 'ANNEXURE VII - FINAL PATTA LANDS', id: '#anx7-patta-final' },
+    { title: 'ANNEXURE F - SAND GHATS', id: '#annexure-f-sand' },
+    { title: 'ANNEXURE F - BENCH MARKS', id: '#annexure-f-benchmark' },
+    { title: 'ANNEXURE F - CORS STATIONS', id: '#annexure-f-cors' },
+    { title: 'ANNEXURE K - PROFORMA AUCTIONED SITES', id: '#annexure-k-proforma' },
+    { title: 'ANNEXURE K - ANNEXURE A', id: '#annexure-k-annexure-a' },
     { title: 'ADDITIONAL - SAND GHATS COORDS', id: '#anx-coords-tbl' },
     { title: 'ADDITIONAL - BENCH MARKS', id: '#anx-benchmark-tbl' },
     { title: 'ADDITIONAL - CORS STATIONS', id: '#anx-cors-tbl' },
@@ -12089,19 +12455,14 @@ function generateFinalPDF() {
     { title: 'DATA TABLE - SOURCE SUMMARY', id: '#summary-tbl' }
   ];
   allTablesData.forEach((tblConfig, index) => {
-    let tables = [];
-    if (tblConfig.id === '#anx2-leases') {
-      tables = Array.from(document.querySelectorAll('table[id^="anx2-leases"]'));
-    } else {
-      const el = document.querySelector(tblConfig.id);
-      if (el) tables.push(el);
-    }
+    const baseId = tblConfig.id.replace('#', '');
+    const tables = Array.from(document.querySelectorAll(`table[id^="${baseId}"]`));
     tables.forEach((tableEl, tblIdx) => {
       if (tableEl && tableEl.rows.length > 1) { // ensure it has rows beyond header
         doc.addPage(); addPageHeader(tblConfig.title.split(' - ')[0]); y=25;
         doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(...navyArr);
         let title = tblConfig.title;
-        if (tblConfig.id === '#anx2-leases' && tables.length > 1) {
+        if (tables.length > 1) {
           title += ` (Table ${tblIdx + 1})`;
         }
         doc.text(title, W/2, y, {align:'center'}); y+=10;
@@ -12680,36 +13041,49 @@ async function generateFinalPDF(regenerate = false) {
       if (!pages.length) {
         const fallbackTables = {
           anx1: [
-            { title: 'Annexure I(a) - Rivers', selector: '#anx1-rivers' },
-            { title: 'Annexure I(b) - De-siltation', selector: '#anx1-desilt' },
-            { title: 'Annexure I(c) - Patta Lands', selector: '#anx1-patta' },
-            { title: 'Annexure I(d) - M-Sand Plants', selector: '#anx1-msand' }
+            { title: 'Annexure I(a) - Rivers', selector: 'table[id^="anx1-rivers"]', all: true },
+            { title: 'Annexure I(b) - De-siltation', selector: 'table[id^="anx1-desilt"]', all: true },
+            { title: 'Annexure I(c) - Patta Lands', selector: 'table[id^="anx1-patta"]', all: true },
+            { title: 'Annexure I(d) - M-Sand Plants', selector: 'table[id^="anx1-msand"]', all: true }
           ],
           anx2: [
             { title: 'Annexure II(a) - Mining Leases', selector: 'table[id^="anx2-leases"]', all: true },
-            { title: 'Annexure II(b) - Patta Lands', selector: '#anx2-patta' },
-            { title: 'Annexure II(c) - De-siltation', selector: '#anx2-desilt' },
-            { title: 'Annexure II(d) - M-Sand Plants', selector: '#anx2-msand' }
+            { title: 'Annexure II(b) - Patta Lands', selector: 'table[id^="anx2-patta"]', all: true },
+            { title: 'Annexure II(c) - De-siltation', selector: 'table[id^="anx2-desilt"]', all: true },
+            { title: 'Annexure II(d) - M-Sand Plants', selector: 'table[id^="anx2-msand"]', all: true }
           ],
           anx3: [
-            { title: 'Annexure III(a) - Clusters', selector: '#anx3-clusters' },
-            { title: 'Annexure III(b) - Contiguous Clusters', selector: '#anx3-contiguous' }
+            { title: 'Annexure III(a) - Clusters', selector: 'table[id^="anx3-clusters"]', all: true },
+            { title: 'Annexure III(b) - Contiguous Clusters', selector: 'table[id^="anx3-contiguous"]', all: true }
           ],
           anx4: [
-            { title: 'Annexure IV(a) - Lease Routes', selector: '#anx4-routes' },
-            { title: 'Annexure IV(b) - Cluster Routes', selector: '#anx4-cluster-routes' }
+            { title: 'Annexure IV(a) - Lease Routes', selector: 'table[id^="anx4-routes"]', all: true },
+            { title: 'Annexure IV(b) - Cluster Routes', selector: 'table[id^="anx4-cluster-routes"]', all: true }
           ],
-          anx5: [{ title: 'Annexure V - Bench Mark & CORS', selector: '#anx5-benchmarks' }],
-          anx6: [{ title: 'Annexure VI - Final Cluster Details', selector: '#anx6-final-clusters' }],
-          anx7: [{ title: 'Annexure VII - Transportation Routes', selector: '#anx7-patta-final' }],
+          anx5: [
+            { title: 'Annexure V - Bench Mark & CORS', selector: 'table[id^="anx5-benchmarks"]', all: true },
+            { title: 'Annexure V - Mining Leases', selector: 'table[id^="anx5-mining"]', all: true },
+            { title: 'Annexure V - Patta Lands', selector: 'table[id^="anx5-patta"]', all: true },
+            { title: 'Annexure V - De-siltation', selector: 'table[id^="anx5-desilt"]', all: true },
+            { title: 'Annexure V - M-Sand Plants', selector: 'table[id^="anx5-msand"]', all: true }
+          ],
+          anx6: [
+            { title: 'Annexure VI - Final Cluster Details', selector: 'table[id^="anx6-final-clusters"]', all: true },
+            { title: 'Annexure VI - Contiguous Cluster Details', selector: 'table[id^="anx6-contiguous-clusters"]', all: true }
+          ],
+          anx7: [
+            { title: 'Annexure VII - Individual Routes', selector: 'table[id^="anx7-routes"]', all: true },
+            { title: 'Annexure VII - Cluster Routes', selector: 'table[id^="anx7-cluster-routes"]', all: true },
+            { title: 'Annexure VII - Transportation Routes', selector: 'table[id^="anx7-patta-final"]', all: true }
+          ],
           'annexure-f': [
-            { title: 'Annexure F - Sand Ghats', selector: '#annexure-f-sand' },
-            { title: 'Annexure F - Bench Marks', selector: '#annexure-f-benchmark' },
-            { title: 'Annexure F - CORS Stations', selector: '#annexure-f-cors' }
+            { title: 'Annexure F - Sand Ghats', selector: 'table[id^="annexure-f-sand"]', all: true },
+            { title: 'Annexure F - Bench Marks', selector: 'table[id^="annexure-f-benchmark"]', all: true },
+            { title: 'Annexure F - CORS Stations', selector: 'table[id^="annexure-f-cors"]', all: true }
           ],
           'annexure-k': [
-            { title: 'Annexure K - Proforma Auctioned Sites', selector: '#annexure-k-proforma' },
-            { title: 'Annexure K - Annexure A', selector: '#annexure-k-annexure-a' }
+            { title: 'Annexure K - Proforma Auctioned Sites', selector: 'table[id^="annexure-k-proforma"]', all: true },
+            { title: 'Annexure K - Annexure A', selector: 'table[id^="annexure-k-annexure-a"]', all: true }
           ]
         };
         if (fallbackTables[viewId]) return addNativeTablesAsPreviewFallback(title, fallbackTables[viewId]);
@@ -13475,6 +13849,11 @@ const pdfPreview = {
         if (expectedColumns && visibleColumns < expectedColumns && cells.length === 1) {
           cells[0].colSpan = expectedColumns;
         }
+        Array.from(row.children).forEach(cell => {
+          if (!cell.querySelector('img,svg,canvas') && String(cell.textContent || '').trim() === '') {
+            cell.textContent = 'NA';
+          }
+        });
       });
     });
 
@@ -13506,8 +13885,14 @@ const pdfPreview = {
         : el.value;
       const span = document.createElement('span');
       span.className = 'field-value';
-      span.textContent = value || 'NUL';
+      span.textContent = value || 'NA';
       el.replaceWith(span);
+    });
+
+    clone.querySelectorAll('td, th').forEach(cell => {
+      if (!cell.querySelector('img,svg,canvas') && String(cell.textContent || '').trim() === '') {
+        cell.textContent = 'NA';
+      }
     });
 
     clone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
@@ -15279,7 +15664,7 @@ window.addEventListener('DOMContentLoaded',()=>{
     if (e.target.tagName === 'TD' && (e.target.contentEditable === 'true' || e.target.hasAttribute('contenteditable'))) {
       const text = e.target.innerText.trim();
       if (text === '') {
-        e.target.innerText = 'NUL';
+        e.target.innerText = 'NA';
         const inputEvent = new Event('input', { bubbles: true });
         e.target.dispatchEvent(inputEvent);
       }

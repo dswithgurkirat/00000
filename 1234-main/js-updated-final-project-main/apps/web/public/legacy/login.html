@@ -4226,7 +4226,6 @@
             </label>
           </div>
         </div>
-        </div>
         <div class="tbl-wrap">
           <table class="anx-tbl" id="anx6-final-clusters" style="min-width:1200px">
             <thead>
@@ -4581,7 +4580,7 @@
                 <td contenteditable="true">Mandi Kalu railway Bridge (Top Level on Bridge)</td>
                 <td contenteditable="true" class="coord-input">31.137186 N, 75.108104 E</td>
                 <td contenteditable="true">219.094 m</td>
-                <td contenteditable="true">NUL</td>
+                <td contenteditable="true">NA</td>
                 <td><button class="btn btn-xs btn-danger" onclick="delRowAnnexureF(this)" style="display:inline-flex; align-items:center; justify-content:center; padding:4px;"><i data-lucide="trash-2" style="width:12px; height:12px;"></i></button></td>
               </tr>
               <tr>
@@ -5981,7 +5980,7 @@
       }
     }, 500);
   </script>
-  <script defer src="js/portal.bundle.js?v=13"></script>
+  <script defer src="js/portal.bundle.js?v=15"></script>
 
 <script>
 // --- DYNAMIC HEADINGS INJECTION ---
@@ -6044,83 +6043,11 @@ document.addEventListener('DOMContentLoaded', () => {
 </script>
 
 <script>
-// --- GENERIC TABLE CLONE LOGIC ---
-window.addGenericTableBlock = function(btn) {
-  const section = btn.closest('.anx-section');
-  if (!section) return;
-  const clone = section.cloneNode(true);
-  
-  const timestamp = Date.now();
-  const tables = clone.querySelectorAll('table');
-  tables.forEach(t => {
-    const baseId = t.id.split('-clone-')[0];
-    t.id = baseId + '-clone-' + timestamp;
-    const tbody = t.querySelector('tbody');
-    if (tbody) tbody.innerHTML = '';
-  });
-
-  let removeBtn = clone.querySelector('.rm-generic-btn');
-  if (!removeBtn) {
-    const footer = clone.querySelector('.section-footer');
-    if (footer) {
-      removeBtn = document.createElement('button');
-      removeBtn.className = 'btn btn-xs btn-danger rm-generic-btn';
-      removeBtn.style.display = 'inline-flex';
-      removeBtn.style.alignItems = 'center';
-      removeBtn.style.gap = '6px';
-      removeBtn.innerHTML = '<i data-lucide="trash-2" style="width:12px; height:12px;"></i><span>Remove Table</span>';
-      removeBtn.onclick = function() { 
-        this.closest('.anx-section').remove(); 
-        // Trigger live preview
-        const viewId = this.closest('.view')?.id;
-        if (viewId && typeof window['export' + viewId.replace('view-','').charAt(0).toUpperCase() + viewId.replace('view-','').slice(1) + 'PDF'] === 'function') {
-           window['export' + viewId.replace('view-','').charAt(0).toUpperCase() + viewId.replace('view-','').slice(1) + 'PDF'](null, true);
-        }
-      };
-      footer.appendChild(removeBtn);
-    }
-  } else {
-    removeBtn.style.display = 'inline-flex';
-  }
-
-  const titleEl = clone.querySelector('.anx-section-title');
-  if (titleEl && !titleEl.innerText.includes('(Continued)')) {
-    titleEl.innerText = titleEl.innerText + ' (Continued)';
-  }
-
-  section.parentNode.insertBefore(clone, section.nextSibling);
-  if (window.initLucide) window.initLucide();
-  
-  // Try to add 1 empty row based on the first table's first row
-  tables.forEach((t, i) => {
-     const origTable = section.querySelectorAll('table')[i];
-     if (origTable && origTable.querySelector('tbody tr')) {
-         const emptyRow = origTable.querySelector('tbody tr').cloneNode(true);
-         emptyRow.querySelectorAll('td').forEach(td => {
-            if (!td.querySelector('button') && !td.querySelector('select')) {
-               td.innerText = '';
-               if (td.contentEditable === 'false' && !td.classList.contains('calc-total') && !td.classList.contains('calc-net')) {
-                   td.contentEditable = 'true';
-               }
-            }
-            // re-bind events
-            if (td.classList.contains('calc-total') || td.classList.contains('calc-net')) {
-                td.innerText = '0.00';
-            }
-         });
-         const tbody = t.querySelector('tbody');
-         if(tbody) tbody.appendChild(emptyRow);
-     }
-  });
-  
-  // Trigger live preview
-  const viewId = section.closest('.view')?.id;
-  if (viewId) {
-    const exportFnName = 'export' + viewId.replace('view-','').toUpperCase() + 'PDF';
-    if (typeof window[exportFnName] === 'function') window[exportFnName](null, true);
-    // Handle camelCase variations if needed
-  }
-};
+// The clone implementation lives in portal.bundle.js. Keep this block only as
+// a compatibility guard so older cached pages do not overwrite the bundle logic.
+if (typeof window.addGenericTableBlock !== 'function') {
+  window.addGenericTableBlock = function() {};
+}
 </script>
 
 
